@@ -355,11 +355,12 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
       value: money(row.amount),
       full: row.full,
       items: row.full ? row.items.length : null,
-      itemsDetail: row.full && row.fiscalOperation?.type === 'return' ? row.items : null,
+      itemsDetail: row.full ? row.items : null,
       taxes: row.full ? row.taxes : null,
       freight: row.full ? row.freight : null,
       fiscalOperation: row.fiscalOperation || null,
       operation: row.operation || null,
+      purpose: row.purpose || null,
       referencedKeys: row.referencedKeys || []
     });
     for (const [map, key, name] of [

@@ -660,11 +660,13 @@ export async function readNfeSummary(inicio, fim, companyId = null, scope = {}) 
         seller: row.seller,
         value: roundMoney(row.amount),
         items: row.items.length,
+        itemsDetail: row.items,
         taxes: row.taxes,
         simpleIcmsCredit: row.simpleIcmsCredit,
         freight: row.freight,
         fiscalOperation: row.fiscalOperation,
         operation: row.operation,
+        purpose: row.purpose,
         referencedKeys: row.referencedKeys
       }))
       .sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number)),

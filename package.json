@@ -9,7 +9,7 @@
     "dev": "node --watch server/server.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check:syntax": "node --check server/server.js && node --check server/db.js && node --check server/intelligence.js && node --check server/nfe-files.js && node --check server/nfe-metrics.js && node --check server/nfe-search.js && node --check server/sefaz-files.js && node --check server/queries.js && node --check public/app.js && node --check public/lib/analysis.js && node --check public/report-catalog.js && node --check public/commission.js && node --check public/lib/api-client.js && node --check public/lib/format.js && node --check public/state.js && node --check public/ui/icons.js && node --check public/ui/navigation.js && node --check frontend-vercel/app.js",
+    "check:syntax": "node --check server/server.js && node --check server/db.js && node --check server/intelligence.js && node --check server/nfe-files.js && node --check server/nfe-metrics.js && node --check server/nfe-search.js && node --check server/sefaz-files.js && node --check server/supabase-sync.js && node --check server/queries.js && node --check public/app.js && node --check public/lib/analysis.js && node --check public/report-catalog.js && node --check public/commission.js && node --check public/lib/api-client.js && node --check public/lib/format.js && node --check public/state.js && node --check public/ui/icons.js && node --check public/ui/navigation.js && node --check frontend-vercel/app.js",
     "check:structure": "node scripts/verify-project.mjs",
     "sync:frontend": "node scripts/sync-frontend.mjs",
     "test": "node --test server/*.test.js",

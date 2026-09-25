@@ -1,11 +1,11 @@
 # Publicação do frontend
 
-O repositório público/privado destinado ao Vercel deve publicar somente a pasta `public`. As pastas `server`, arquivos `.env`, credenciais, scripts SQL e mapeamentos internos não devem compor o artefato público.
+O projeto Vercel deve usar `frontend-vercel` como **Root Directory**. Ela é a cópia estática gerada a partir de `public` por `npm run sync:frontend`. As pastas `server`, `data`, arquivos `.env`, credenciais e XMLs não são publicadas.
 
-1. A Falco publica as views e uma API HTTPS somente de consulta.
-2. Em `public/config.js`, definir `baseUrl` com a URL pública da API, sem token embutido.
-3. Configurar autenticação por sessão/SSO ou gateway. Segredos permanecem na API, nunca no JavaScript.
-4. No Vercel, usar `public` como diretório de saída estático.
-5. Autorizar CORS somente para o domínio definitivo e os previews que forem realmente necessários.
+1. O servidor MaxCompany lê as pastas do Falco e sincroniza os documentos para o Supabase usando apenas a chave secreta local.
+2. O SQL em `supabase/001_fiscal_documents.sql` cria o banco privado e o bucket `fiscal-documents`.
+3. A API HTTPS pública consulta o Supabase e aplica autenticação. A chave secreta permanece somente no servidor/coletor ou na API.
+4. Em `frontend-vercel/config.js`, definir `baseUrl` com a URL HTTPS dessa API, sem token embutido.
+5. Autorizar CORS somente para o domínio definitivo e os previews realmente necessários.
 
-No localhost, `baseUrl` permanece vazio e as chamadas usam a ponte Node local. Para publicação, recomenda-se manter um repositório privado e criar um pacote de frontend separado antes do primeiro commit.
+No localhost, `baseUrl` permanece vazio e as chamadas usam a ponte Node local. O frontend Vercel só deve ser disponibilizado aos usuários depois que a API cloud estiver ligada ao Supabase.

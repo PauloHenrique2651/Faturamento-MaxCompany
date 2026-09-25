@@ -15,6 +15,7 @@ import {
 } from './sefaz-files.js';
 import { searchQuery } from './nfe-search.js';
 import { renderDanfe } from './danfe.js';
+import { readSupabaseSyncStatus, syncSupabaseFromFalco } from './supabase-sync.js';
 import {
   authenticate,
   createUser,
@@ -267,6 +268,7 @@ async function api(req, res, url, user) {
         },
         incoming: await readIncomingSyncStatus(),
         sefazWorkerRunning: sefazSyncRunning,
+        supabase: readSupabaseSyncStatus(),
         sql: process.env.MASERP_SQL_SERVER ? 'configured_not_checked' : 'not_configured'
       });
     } catch (error) {
@@ -495,3 +497,15 @@ const sefazCheckSeconds = Number.isFinite(configuredSefazCheckSeconds)
   ? Math.max(60, configuredSefazCheckSeconds)
   : 300;
 setInterval(syncSefaz, sefazCheckSeconds * 1000);
+
+function syncSupabase() {
+  syncSupabaseFromFalco().catch((error) =>
+    console.error('Falha na sincronização Supabase:', error.message || error.name)
+  );
+}
+syncSupabase();
+const configuredSupabaseSyncSeconds = Number(process.env.SUPABASE_SYNC_SECONDS || 300);
+const supabaseSyncSeconds = Number.isFinite(configuredSupabaseSyncSeconds)
+  ? Math.max(60, configuredSupabaseSyncSeconds)
+  : 300;
+setInterval(syncSupabase, supabaseSyncSeconds * 1000);

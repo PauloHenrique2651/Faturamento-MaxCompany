@@ -39,8 +39,10 @@ for (const relativePath of [
   'sql/03-validar-views-falco.sql',
   'server/db.js',
   'server/intelligence.js',
+  'server/supabase-sync.js',
   'server/queries.js',
-  'server/server.js'
+  'server/server.js',
+  'supabase/001_fiscal_documents.sql'
 ]) {
   await requireFile(relativePath);
 }
