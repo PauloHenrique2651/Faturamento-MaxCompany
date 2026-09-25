@@ -8,9 +8,10 @@ import { customerGroup, registeredCustomerName } from './customer-groups.js';
 import { classifyFiscalOperation } from './fiscal-operation.js';
 
 const nfeRoot = process.env.FALCO_NFE_PATH || '\\\\maxcompany\\DEPLOY\\NFE';
-const archiveRoot =
-  process.env.FALCO_NFE_ARCHIVE ||
-  join(fileURLToPath(new URL('..', import.meta.url)), 'data', 'nfe');
+// O XML permanece na pasta do Falco. Um espelho só existe quando for configurado
+// explicitamente, para não duplicar milhares de documentos no projeto do CRM.
+const archiveRoot = process.env.FALCO_NFE_ARCHIVE || null;
+const cacheRoot = join(fileURLToPath(new URL('..', import.meta.url)), 'data', 'cache');
 const companies = [
   [1, 'MaxPlast', 'Maxplast'],
   [2, 'MaxSafety', 'Maxsafety'],
@@ -34,7 +35,7 @@ export async function readOutgoingDocument(companyId, key) {
   if (!match) return null;
   const [, company, suffix] = match;
   const filename = `${key}-nfe.xml`;
-  for (const root of [nfeRoot, archiveRoot]) {
+  for (const root of [nfeRoot, archiveRoot].filter(Boolean)) {
     try {
       const xml = await readFile(join(root, `XmlDestinatario_${suffix}`, filename), 'utf8');
       const row = parseNfeXml(xml, key, 'invoice', company);
@@ -130,7 +131,7 @@ async function getParsed({ path, archivePath, key, kind, company }) {
   try {
     const xml = await readFile(path, 'utf8');
     const data = parseNfeXml(xml, key, kind, company);
-    if (data && path !== archivePath) {
+    if (data && archivePath && path !== archivePath) {
       await mkdir(dirname(archivePath), { recursive: true });
       try {
         await writeFile(archivePath, xml, { flag: 'wx' });
@@ -149,24 +150,25 @@ async function getParsed({ path, archivePath, key, kind, company }) {
 async function readDirectory(company, suffix, kind, firstMonth, lastMonth, preferArchive = false) {
   const folder = `${kind === 'invoice' ? 'XmlDestinatario' : 'XmlCancelamentoDestinatario'}_${suffix}`;
   const sourceDirectory = join(nfeRoot, folder);
-  const archiveDirectory = join(archiveRoot, folder);
+  const archiveDirectory = archiveRoot ? join(archiveRoot, folder) : null;
   const [source, archive] = await Promise.allSettled([
     readdir(sourceDirectory, { withFileTypes: true }),
-    readdir(archiveDirectory, { withFileTypes: true })
+    ...(archiveDirectory ? [readdir(archiveDirectory, { withFileTypes: true })] : [])
   ]);
-  if (source.status === 'rejected' && archive.status === 'rejected') throw source.reason;
+  if (source.status === 'rejected' && (!archiveDirectory || archive?.status === 'rejected'))
+    throw source.reason;
   const entries = new Map();
   for (const [result, directory] of [
     [archive, archiveDirectory],
     [source, sourceDirectory]
   ]) {
-    if (result.status !== 'fulfilled') continue;
+    if (!directory || result?.status !== 'fulfilled') continue;
     for (const item of result.value) {
       if (preferArchive && entries.has(item.name)) continue;
       if (item.isFile() && withinMonths(item.name, firstMonth, lastMonth))
         entries.set(item.name, {
           path: join(directory, item.name),
-          archivePath: join(archiveDirectory, item.name),
+          archivePath: archiveDirectory ? join(archiveDirectory, item.name) : null,
           key: item.name.slice(0, 44),
           kind,
           company
@@ -193,7 +195,7 @@ async function mapLimited(items, limit, mapper) {
 let searchCatalog = null;
 let searchCatalogAt = 0;
 let searchCatalogPending = null;
-const searchIndexPath = join(archiveRoot, 'search-index.json');
+const searchIndexPath = join(cacheRoot, 'nfe-search-index.json');
 
 async function listSearchFiles() {
   const listed = await Promise.allSettled(
