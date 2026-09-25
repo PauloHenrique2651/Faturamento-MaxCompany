@@ -51,6 +51,15 @@ async function supabase(path, options = {}) {
   return body;
 }
 
+async function downloadStorageObject(path) {
+  const base = env('SUPABASE_URL').replace(/\/$/, '');
+  const key = env('SUPABASE_SERVICE_ROLE_KEY') || env('SUPABASE_SECRET_KEY');
+  if (!base || !key) throw new Error('Supabase não configurado na Vercel.');
+  return fetch(`${base}/storage/v1/object/fiscal-documents/${path}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` }
+  });
+}
+
 function requestBody(req) {
   return new Promise((resolve, reject) => {
     let value = '';
@@ -342,6 +351,39 @@ async function handle(req, res) {
   if (path === '/api/falco/entradas') {
     const cloud = await cloudDocuments('incoming', url);
     return json(res, 200, baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'incoming'));
+  }
+  if (path === '/api/falco/documento') {
+    const type = url.searchParams.get('tipo') === 'entrada' ? 'incoming' : 'outgoing';
+    const companyId = Number(url.searchParams.get('empresa'));
+    const accessKey = String(url.searchParams.get('chave') || '');
+    if (![1, 2, 3, 4].includes(companyId) || !/^\d{44}$/.test(accessKey))
+      return json(res, 400, { error: 'Documento inválido.' });
+    const rows = await supabase(
+      `/rest/v1/fiscal_documents?direction=eq.${type}&company_id=eq.${companyId}&access_key=eq.${accessKey}&limit=1`
+    );
+    const row = rows?.[0];
+    if (!row) return json(res, 404, { error: 'Documento não encontrado.' });
+    const format = url.searchParams.get('formato');
+    if (format === 'xml' || format === 'pdf' || format === 'danfe') {
+      const extension = format === 'xml' ? 'xml' : 'pdf';
+      const object = await downloadStorageObject(`${companyId}/${type}/${accessKey}.${extension}`);
+      if (!object.ok)
+        return json(res, 404, { error: `${extension.toUpperCase()} ainda não sincronizado.` });
+      const content = Buffer.from(await object.arrayBuffer());
+      res.statusCode = 200;
+      res.setHeader(
+        'Content-Type',
+        extension === 'xml' ? 'application/xml; charset=utf-8' : 'application/pdf'
+      );
+      res.setHeader(
+        'Content-Disposition',
+        `${url.searchParams.get('baixar') === '1' ? 'attachment' : 'inline'}; filename="${accessKey}.${extension}"`
+      );
+      res.end(content);
+      return;
+    }
+    const pdf = await downloadStorageObject(`${companyId}/${type}/${accessKey}.pdf`);
+    return json(res, 200, { ...documentFromCloud(row), hasPdf: pdf.ok });
   }
   if (path === '/api/health') return json(res, 200, { ok: true, source: 'Supabase' });
   return json(res, 404, { error: 'Rota não encontrada.' });
