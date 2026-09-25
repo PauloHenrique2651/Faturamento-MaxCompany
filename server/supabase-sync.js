@@ -11,6 +11,7 @@ import {
 
 const root = join(fileURLToPath(new URL('..', import.meta.url)), 'data', 'supabase');
 const statePath = join(root, 'sync-state.json');
+const usersPath = join(root, '..', 'auth', 'users.json');
 const companies = new Map([
   ['MaxPlast', 1],
   ['MaxSafety', 2],
@@ -153,6 +154,40 @@ async function upsertDocuments(rows) {
   }
 }
 
+async function syncUsers() {
+  let users;
+  try {
+    users = JSON.parse(await readFile(usersPath, 'utf8'));
+  } catch {
+    return 0;
+  }
+  const rows = users.map((user) => ({
+    id: user.id,
+    name: user.name,
+    name_normalized: String(user.name || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLocaleLowerCase('pt-BR'),
+    role: user.role,
+    salt: user.salt,
+    hash: user.hash,
+    version: user.version || 1,
+    disabled: false
+  }));
+  if (!rows.length) return 0;
+  await request('/rest/v1/crm_users?on_conflict=id', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal'
+    },
+    body: JSON.stringify(rows)
+  });
+  return rows.length;
+}
+
 async function uploadObject(path, content, contentType) {
   await request(`/storage/v1/object/fiscal-documents/${path}`, {
     method: 'POST',
@@ -233,6 +268,7 @@ export async function syncSupabaseFromFalco() {
       readIncomingSummary(start, end),
       readIncomingSyncStatus()
     ]);
+    const userCount = await syncUsers();
     const outgoingRows = outgoing.documents.map((row) => normalizeCloudDocument(row, 'outgoing'));
     const incomingRows = incoming.documents.map((row) => normalizeCloudDocument(row, 'incoming'));
     await upsertDocuments([...outgoingRows, ...incomingRows]);
@@ -258,6 +294,7 @@ export async function syncSupabaseFromFalco() {
     const details = {
       start,
       end,
+      userCount,
       outgoingSources: `${outgoing.sourcesAvailable}/${outgoing.sourcesTotal}`,
       incomingSources: `${incoming.sourcesAvailable}/${incoming.sourcesTotal}`,
       sefaz
