@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#07111c" />
+    <link rel="icon" type="image/webp" href="/brand/favicon.webp" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <title>CRM Executivo · Grupo MaxCompany</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/brand.css" />
+  </head>
+  <body class="auth-pending">
+    <section class="auth-screen" id="auth-screen" aria-label="Acesso ao CRM" hidden>
+      <form id="login-form" class="auth-card">
+        <img src="/brand/max-company-white.webp" alt="Grupo MaxCompany" />
+        <span>CRM EXECUTIVO</span>
+        <h1>Entrar no painel</h1>
+        <label>Usuário<input name="name" autocomplete="username" required /></label>
+        <label
+          >Senha<input name="password" type="password" autocomplete="current-password" required
+        /></label>
+        <p id="login-error" role="alert"></p>
+        <button class="button primary" type="submit">Entrar</button>
+      </form>
+    </section>
+    <a href="#main-content" class="skip">Pular para o conteúdo</a>
+    <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-row">
+        <a class="brand" href="#dashboard" aria-label="Grupo MaxCompany · CRM Executivo"
+          ><img
+            class="brand-full"
+            src="/brand/max-company-white.webp"
+            alt="Grupo MaxCompany"
+            width="2048"
+            height="702" /><img
+            class="brand-compact"
+            src="/brand/max-symbol-white.webp"
+            alt=""
+            width="512"
+            height="512" /></a
+        ><button
+          id="sidebar-toggle"
+          class="sidebar-toggle"
+          aria-label="Recolher menu"
+          aria-expanded="true"
+        ></button>
+      </div>
+      <div class="workspace">
+        <span class="workspace-kicker">OPERAÇÃO</span>
+        <div>
+          <strong>CRM Executivo</strong><small>Dados ao vivo · sincronização automática</small>
+        </div>
+        <span
+          class="workspace-pulse"
+          id="connection-indicator"
+          role="status"
+          aria-label="Verificando conexão com o ERP Falco"
+        ></span>
+      </div>
+      <nav id="navigation" aria-label="Navegação principal"></nav>
+      <div class="group-brands" aria-label="Empresas do Grupo MaxCompany">
+        <img src="/brand/maxplast-color.webp" alt="MaxPlast" width="512" height="512" /><img
+          src="/brand/maxsafety-color.webp"
+          alt="MaxSafety"
+          width="512"
+          height="512"
+        /><img src="/brand/maxsupply-color.webp" alt="MaxSupply" width="512" height="512" />
+      </div>
+      <div class="sidebar-bottom">
+        <span class="status-dot"></span>
+        <div><strong>Modo consulta</strong><small>Nenhuma alteração no ERP Falco</small></div>
+      </div>
+    </aside>
+    <div class="application">
+      <header class="topbar">
+        <button
+          id="menu"
+          class="icon-button mobile-only"
+          aria-label="Abrir menu"
+          aria-expanded="false"
+        ></button>
+        <div class="breadcrumb">
+          <span class="crumb-brand">GRUPO MAXCOMPANY</span><span>/</span>
+          <strong id="section-name">Dashboard NF-e</strong>
+        </div>
+        <div class="global-search">
+          <label for="global-search" class="sr-only">Buscar em todas as NF-e</label>
+          <span id="global-search-icon" aria-hidden="true"></span>
+          <input
+            id="global-search"
+            type="search"
+            autocomplete="off"
+            placeholder="Buscar NF-e, cliente, vendedor ou produto"
+          />
+          <kbd aria-hidden="true">Ctrl K</kbd>
+        </div>
+        <div class="top-actions">
+          <span id="sync-status" role="status">Conectando ao ERP Falco</span
+          ><button id="refresh" class="icon-button" aria-label="Atualizar dados"></button
+          ><button id="method" class="button quiet">Critério dos dados</button
+          ><span id="current-user" class="current-user"></span
+          ><button id="logout" class="button quiet" type="button">Sair</button>
+        </div>
+      </header>
+      <main id="main-content" tabindex="-1">
+        <button
+          id="mobile-filters"
+          class="button quiet mobile-filter-trigger"
+          type="button"
+          aria-controls="analysis-filters"
+          aria-expanded="false"
+        >
+          Filtros
+        </button>
+        <div id="filters-scrim" class="filters-scrim" hidden></div>
+        <section class="filters" id="analysis-filters" aria-label="Filtros de análise">
+          <div class="company-filter">
+            <span class="filter-label">Empresa</span
+            ><select id="company" class="sr-only" aria-label="Empresa">
+              <option value="">Todas as empresas</option>
+            </select>
+            <div
+              id="company-cards"
+              class="company-cards"
+              role="group"
+              aria-label="Selecionar empresa"
+            ></div>
+          </div>
+          <label
+            >Período<select id="preset">
+              <option value="today">Hoje</option>
+              <option value="yesterday">Ontem</option>
+              <option value="week">Semana atual</option>
+              <option value="prev-week">Semana anterior</option>
+              <option value="30">Últimos 30 dias</option>
+              <option value="7">Últimos 7 dias</option>
+              <option value="90">Últimos 90 dias</option>
+              <option value="month">Mês atual</option>
+              <option value="prev-month">Mês anterior</option>
+              <option value="year">Ano atual</option>
+              <option value="prev-year">Ano anterior</option>
+              <option value="custom">Personalizado</option>
+            </select></label
+          ><label>De<input id="start" type="date" required /></label
+          ><label>Até<input id="end" type="date" required /></label
+          ><span class="filter-auto"
+            ><span class="status-dot" aria-hidden="true"></span>Atualização imediata</span
+          ><label class="role-select"
+            >Atribuição de vendas<select id="role">
+              <option value="interno">Vendedor interno</option>
+              <option value="externo">Vendedor externo</option>
+            </select></label
+          >
+        </section>
+        <div id="context"></div>
+        <div id="notice" role="status"></div>
+        <div id="page" aria-busy="true">
+          <div class="loading"><span class="spinner"></span>Consultando o ERP Falco…</div>
+        </div>
+        <footer class="page-footer">
+          <span id="data-source-status">Falco · Conectando aos dados ao vivo</span
+          ><span
+            ><span id="refresh-cadence">Tela atualizada automaticamente a cada 10 s</span> ·
+            <button id="pause" class="text-button">Pausar</button></span
+          >
+        </footer>
+      </main>
+    </div>
+    <dialog id="method-dialog" aria-labelledby="method-dialog-title">
+      <div class="dialog-head">
+        <h2 id="method-dialog-title">Como ler estes números</h2>
+        <button class="icon-button" data-close aria-label="Fechar"></button>
+      </div>
+      <div class="dialog-content">
+        <h3>Dashboard NF-e</h3>
+        <p>
+          Soma dos valores totais dos XMLs autorizados de NF-e de saída encontrados no
+          compartilhamento Falco, excluindo as notas com evento de cancelamento identificado. É uma
+          visão dos arquivos disponíveis, sem conciliação de devoluções ou outros ajustes do ERP.
+        </p>
+        <h3>Vendedores, clientes e produtos</h3>
+        <p>
+          O vendedor é extraído do campo “Vendedor” nas informações adicionais do XML. Notas sem
+          essa indicação são contadas separadamente. Clientes vêm do destinatário e produtos dos
+          itens da nota. O valor do vendedor e do cliente usa o total da NF-e; o produto usa o valor
+          bruto do item. Isso não equivale a pedidos, comissão, margem ou cadastro completo do ERP.
+        </p>
+        <h3>NF-e recebidas da SEFAZ</h3>
+        <p>
+          A distribuição DF-e mostra documentos emitidos por fornecedores contra as empresas do
+          grupo. Essas notas medem entradas, não o faturamento das vendas. O servidor consulta a
+          SEFAZ nos intervalos permitidos; alguns documentos vêm apenas como resumo.
+        </p>
+        <h3>Backup do banco</h3>
+        <p>
+          A pasta BACKUP/BANCO_DE_DADOS contém arquivos MASERP.bak. Eles são cópias do SQL Server,
+          não tabelas legíveis diretamente pelo navegador e não acompanham cada alteração do Falco.
+          Por isso, os gráficos ao vivo usam os XMLs.
+        </p>
+        <h3>Consulta local</h3>
+        <p>
+          A página verifica a API local a cada 10 segundos e reconecta quando volta ao foco ou a
+          rede retorna. O servidor permanece ativo após fechar o navegador e inicia junto com o
+          Windows quando a tarefa de inicialização está instalada. As pastas são consultadas sem
+          alteração; não há transmissão instantânea de eventos.
+        </p>
+      </div>
+    </dialog>
+    <dialog id="detail-dialog" aria-labelledby="detail-title">
+      <div class="dialog-head">
+        <h2 id="detail-title">Detalhe do pedido</h2>
+        <button class="icon-button" data-close aria-label="Fechar"></button>
+      </div>
+      <div id="detail-content" class="dialog-content"></div>
+    </dialog>
+    <script src="/config.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

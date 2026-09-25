@@ -1,0 +1,7 @@
+backups/
+node_modules/
+data/
+.playwright-cli/
+*.docx
+public/brand/
+frontend-vercel/brand/

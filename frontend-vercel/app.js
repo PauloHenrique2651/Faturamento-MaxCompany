@@ -1,0 +1,1752 @@
+import { parseRate, projectedCommission } from './commission.js';
+import { fetchJson } from './lib/api-client.js';
+import {
+  matchingPreset,
+  monthForecast,
+  periodAverages,
+  presetDates,
+  previousMonthAligned
+} from './lib/analysis.js';
+import {
+  $,
+  escapeHtml as esc,
+  formatCompactNumber as short,
+  formatDate as date,
+  formatMoney as money,
+  formatNumber as num,
+  todayInBrazil as today
+} from './lib/format.js';
+import { icon } from './ui/icons.js';
+import { navigationSections as sections, viewLabels as views } from './ui/navigation.js';
+import { legacyViews, readSnapshot, saveSnapshot, state } from './state.js';
+import { reports, reportGroups } from './report-catalog.js';
+function href(view, changes = {}) {
+  const p = new URLSearchParams(state.params);
+  if (view !== 'busca') {
+    p.delete('q');
+    p.delete('offset');
+  }
+  if (['impostos', 'entradas', 'recebidas'].includes(view)) {
+    for (const key of ['grupoClienteNfe', 'clienteNfe', 'vendedorNfe', 'produtoNfe']) p.delete(key);
+  }
+  for (const [k, v] of Object.entries(changes)) {
+    if (v === null || v === '') p.delete(k);
+    else p.set(k, String(v));
+  }
+  return `#${view}?${p}`;
+}
+function searchUrl(query, offset = 0) {
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  if (offset) params.set('offset', String(offset));
+  return `#busca?${params}`;
+}
+const fiscalViews = new Set(['emitidas', 'recebidas', 'impostos', 'busca']);
+async function sendJson(path, method, body = {}) {
+  const response = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Não foi possível salvar.');
+  return data;
+}
+function showLogin(message = '') {
+  state.user = null;
+  document.body.classList.remove('auth-pending');
+  document.body.classList.add('auth-locked');
+  $('#auth-screen').hidden = false;
+  $('#login-error').textContent = message;
+  $('#login-form [name="name"]').focus();
+}
+function showApp(user) {
+  state.user = user;
+  document.body.classList.remove('auth-pending', 'auth-locked');
+  $('#auth-screen').hidden = true;
+  $('#current-user').textContent = user.name;
+  if (user.role === 'fiscal' && !fiscalViews.has(location.hash.slice(1).split('?')[0]))
+    location.hash = '#emitidas';
+  route();
+}
+async function bootstrap() {
+  try {
+    showApp(await fetchJson('/api/auth/me'));
+  } catch {
+    showLogin();
+  }
+}
+let searchTimer;
+function go(view, changes = {}) {
+  const target = href(view, changes);
+  if (location.hash === target) load(true);
+  else location.hash = target;
+}
+function link(view, text, changes = {}, cls = '') {
+  return `<a class="${cls}" href="${esc(href(view, changes))}">${esc(text)}</a>`;
+}
+function delta(value, previous) {
+  if (!previous) return '<span>Sem base anterior</span>';
+  const d = ((value - previous) / previous) * 100;
+  return `<span class="delta ${d < 0 ? 'down' : ''}">${d > 0 ? '+' : ''}${num(d)}%</span><span>vs. período anterior</span>`;
+}
+function kpi(title, value, note, type = 'trend', featured = false, target = '') {
+  const body = `<div class="kpi-label">${esc(title)}${icon(type)}</div><strong class="kpi-value">${value}</strong><div class="kpi-note">${note}</div>`;
+  return target
+    ? `<a class="kpi kpi-link ${featured ? 'featured' : ''}" href="${esc(target.startsWith('#') ? target : href(target))}" aria-label="Abrir ${esc(title)}">${body}<span class="kpi-action">Ver detalhes ${icon('arrow')}</span></a>`
+    : `<article class="kpi ${featured ? 'featured' : ''}">${body}</article>`;
+}
+const bigMoney = (v) => `<small>R$</small>${short(v)}`;
+function head(title, subtitle, kicker = 'Inteligência comercial') {
+  return `<header class="page-head"><div><div class="eyebrow">${esc(kicker)}</div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div><span class="head-tag">${icon('shield')}ERP Falco · somente consulta</span></header>`;
+}
+function panelHead(title, subtitle, action = '') {
+  return `<div class="panel-head"><div><h2>${esc(title)}</h2><p class="panel-sub">${esc(subtitle)}</p></div>${action}</div>`;
+}
+function empty(message = 'Não há registros neste recorte.') {
+  return `<div class="empty"><h2>Nenhum resultado</h2><p>${esc(message)} Experimente outro período ou remova um filtro.</p></div>`;
+}
+function totals() {
+  const d = state.data.indicadores;
+  return `<section class="kpis">${kpi('Vendas em pedidos', bigMoney(d.vendas), delta(d.vendas, d.anterior), 'trend', true, 'pedidos')}${kpi('Pedidos de venda', num(d.pedidos), delta(d.pedidos, d.pedidosAnterior), 'document', false, 'pedidos')}${kpi('Clientes com compra', num(d.clientes), delta(d.clientes, d.clientesAnterior), 'users', false, 'clientes')}${kpi('Ticket por pedido', bigMoney(d.pedidos ? d.vendas / d.pedidos : 0), `${num(d.produtos)} produtos distintos no recorte`, 'box', false, 'produtos')}</section>`;
+}
+function chart() {
+  const d = state.data,
+    rows = d.serie,
+    max = Math.max(...rows.flatMap((r) => [r.valor, r.anterior]), 1),
+    w = 720,
+    h = 210,
+    left = 60,
+    right = 700,
+    top = 10,
+    bottom = 177;
+  const x = (i) => left + (i / Math.max(rows.length - 1, 1)) * (right - left),
+    y = (v) => bottom - (v / max) * (bottom - top);
+  const path = (key) =>
+    rows.map((r, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(r[key]).toFixed(1)}`).join(' ');
+  return `<article class="panel">${panelHead('Evolução das vendas', 'Mesmo intervalo de dias, comparado ao período anterior')}<div class="chart-total"><strong>${money(d.indicadores.vendas)}</strong><div class="legend"><span><i></i>Atual</span><span><i class="previous"></i>Anterior</span></div></div><div class="chart"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Vendas diárias no período atual e anterior. Os pontos abrem os pedidos do dia."><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity=".12"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>${[0, 0.25, 0.5, 0.75, 1].map((t) => `<line x1="${left}" x2="${right}" y1="${y(max * t)}" y2="${y(max * t)}" stroke="#e9ebf0" stroke-dasharray="3 4"/><text x="${left - 10}" y="${y(max * t) + 4}" text-anchor="end">${short(max * t)}</text>`).join('')}<path d="${path('valor')} L${x(rows.length - 1)},${bottom} L${left},${bottom} Z" fill="url(#chart-fill)"/><path d="${path('anterior')}" fill="none" stroke="#9ca5b7" stroke-width="1.8" stroke-dasharray="5 5"/><path d="${path('valor')}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>${rows.map((r, i) => `<a href="${esc(href('pedidos', { inicio: r.dia, fim: r.dia }))}" aria-label="${date(r.dia)}: ${money(r.valor)}. Abrir pedidos"><circle cx="${x(i)}" cy="${y(r.valor)}" r="9" fill="transparent"/><circle class="chart-point" cx="${x(i)}" cy="${y(r.valor)}" r="4"/><title>${date(r.dia)} · ${money(r.valor)} | Anterior: ${money(r.anterior)}</title></a>`).join('')}${[...new Set([0, Math.floor((rows.length - 1) * 0.25), Math.floor((rows.length - 1) * 0.5), Math.floor((rows.length - 1) * 0.75), rows.length - 1])].map((i) => `<text x="${x(i)}" y="203" text-anchor="${i === 0 ? 'start' : i === rows.length - 1 ? 'end' : 'middle'}">${esc(date(rows[i].dia))}</text>`).join('')}</svg></div><div class="chart-footer"><span>${date(d.filtros.inicio)} — ${date(d.filtros.fim)}</span><span>Clique em um ponto para consultar o dia</span></div></article>`;
+}
+function rank(title, rows, view, key, sub = 'Ordenado pelo valor de vendas') {
+  const total = rows.reduce((n, r) => n + r.valor, 0);
+  return `<article class="panel">${panelHead(title, sub, link(view, 'Ver todos', {}, 'text-button'))}<div class="rank-list">${
+    rows
+      .slice(0, 5)
+      .map(
+        (r, i) =>
+          `<div class="rank-row"><span class="rank-index">${String(i + 1).padStart(2, '0')}</span><div>${link(view, r.nome, { [key]: r.id }, 'rank-name')}<div class="rank-detail">${num(r.pedidos)} pedidos · ${num(total ? (r.valor / total) * 100 : 0)}% do recorte</div><div class="progress"><span style="width:${Math.min(100, rows[0]?.valor ? (r.valor / rows[0].valor) * 100 : 0)}%"></span></div></div><span class="rank-value">${money(r.valor)}</span></div>`
+      )
+      .join('') || empty()
+  }</div></article>`;
+}
+function insightCards() {
+  const d = state.data,
+    i = d.indicadores,
+    top = d.clientes[0],
+    lead = d.vendedores.find((v) => v.valor > 0),
+    share = top && i.vendas ? (top.valor / i.vendas) * 100 : 0,
+    fall = d.vendedores.filter((v) => v.anterior > 0 && v.valor < v.anterior);
+  const cards = [
+    [
+      'Concentração de clientes',
+      top
+        ? `${num(share)}% das vendas estão em ${top.nome}. Avalie a dependência dessa conta.`
+        : 'Não há vendas para medir concentração.',
+      'clientes',
+      top ? { cliente: top.id } : {},
+      'users'
+    ],
+    [
+      'Destaque comercial',
+      lead
+        ? `${lead.nome} lidera o recorte com ${money(lead.valor)} e ${lead.clientes} clientes atendidos.`
+        : 'Nenhum vendedor com vendas neste recorte.',
+      'vendedores',
+      lead ? { vendedor: lead.id } : {},
+      'trend'
+    ],
+    [
+      'Ponto de atenção',
+      `${fall.length} vendedores venderam menos que no intervalo anterior. Compare carteira e contexto antes de avaliar desempenho.`,
+      'vendedores',
+      {},
+      'target'
+    ]
+  ];
+  return `<div class="insight-strip">${cards.map(([title, body, v, c, ic]) => `<article class="insight"><div class="insight-icon">${icon(ic)}</div><div><h3>${title}</h3><p>${esc(body)}</p>${link(v, 'Investigar', c)}</div></article>`).join('')}</div>`;
+}
+function table(columns, rows) {
+  return `<div class="table-wrap"><table class="data-table"><thead><tr>${columns.map((c) => `<th class="${c.num ? 'num' : ''}">${esc(c.title)}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${columns.map((c) => `<td class="${c.num ? 'num' : ''} ${c.cls || ''}">${c.render(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function groupName(id) {
+  return state.data.catalogo.grupos.find((g) => g.id === id)?.nome || 'Sem grupo';
+}
+function sellerCell(r) {
+  const initials = r.nome
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0])
+    .join('');
+  return `<div class="entity"><span class="avatar">${esc(initials)}</span><div>${link('vendedores', r.nome, { vendedor: r.id })}<small>Cód. ${r.id} · ${esc(groupName(r.grupo))}</small></div></div>`;
+}
+const sellerColumns = () => [
+  { title: 'Vendedor', cls: 'name-cell', render: sellerCell },
+  { title: 'Vendas em pedidos', num: true, render: (r) => money(r.valor) },
+  { title: 'Pedidos', num: true, render: (r) => num(r.pedidos) },
+  { title: 'Clientes', num: true, render: (r) => num(r.clientes) },
+  { title: 'Comparativo', num: true, render: (r) => delta(r.valor, r.anterior) },
+  {
+    title: 'Cadastro',
+    render: (r) =>
+      `<span class="badge ${r.ativo ? 'active' : ''}">${r.ativo ? 'Ativo' : 'Inativo'}</span>`
+  }
+];
+function dashboard() {
+  const d = state.data;
+  $('#page').innerHTML =
+    head(
+      'Visão executiva',
+      'Sua operação em perspectiva. Do resultado consolidado aos pedidos que explicam cada número.',
+      'Maxcompany / Visão geral'
+    ) +
+    totals() +
+    `<div class="columns">${chart()}${rank('Principais clientes', d.clientes, 'clientes', 'cliente')}</div>` +
+    insightCards() +
+    `<div class="columns equal">${rank('Produtos mais vendidos', d.produtos, 'produtos', 'produto')}${rank('Fornecedores em destaque', d.fornecedores, 'fornecedores', 'fornecedor', d.comprasDisponiveis ? 'Valor em pedidos de compra' : 'Remova filtros comerciais para analisar compras')}</div><section class="panel">${panelHead('Desempenho dos vendedores', `Atribuição ao vendedor ${d.filtros.papel}`, link('vendedores', 'Ver equipe completa', {}, 'text-button'))}${table(sellerColumns(), d.vendedores.filter((r) => r.valor > 0).slice(0, 5))}</section>`;
+}
+function tabs(items) {
+  return `<div class="tabs">${items.map((v) => link(v, views[v], {}, `tab ${state.view === v ? 'active' : ''}`)).join('')}</div>`;
+}
+function groupCards(edit = false) {
+  const d = state.data,
+    groups = [...d.catalogo.grupos];
+  if (d.catalogo.vendedores.some((v) => v.grupo == null)) groups.push({ id: 0, nome: 'Sem grupo' });
+  return `<div class="group-cards">${groups
+    .map((g) => {
+      const members = d.catalogo.vendedores.filter((v) => (v.grupo ?? 0) === g.id),
+        ranking = d.vendedores.filter((v) => (v.grupo ?? 0) === g.id);
+      return `<article class="group-card"><div><h3>${link('vendedores', g.nome, { grupo: g.id, vendedor: null })}</h3><p>${members.length} vendedores · ${members.filter((v) => v.ativo).length} ativos</p><strong class="group-total">${money(ranking.reduce((n, v) => n + v.valor, 0))}</strong><p>Vendas no recorte</p></div>${edit ? `<label class="rate-field"><span class="sr-only">Comissão do grupo ${esc(g.nome)}</span><input class="rate-input" inputmode="decimal" data-rate="grupos" data-id="${g.id}" value="${esc(state.rules.grupos[g.id] ?? '')}" placeholder="Herdar" aria-label="Comissão do grupo ${esc(g.nome)}"><span>%</span></label>` : link('vendedores', 'Ver equipe', { grupo: g.id, vendedor: null }, 'text-button')}</article>`;
+    })
+    .join('')}</div>`;
+}
+function listingConfig() {
+  const v = state.view,
+    d = state.data;
+  if (v === 'vendedores' || v === 'grupos')
+    return {
+      rows: d.vendedores,
+      columns: sellerColumns(),
+      search: 'Buscar vendedor ou código',
+      sellers: true
+    };
+  if (v === 'comissoes')
+    return {
+      rows: d.vendedores,
+      search: 'Buscar vendedor ou código',
+      sellers: true,
+      columns: [
+        { title: 'Vendedor', cls: 'name-cell', render: sellerCell },
+        { title: 'Base de venda', num: true, render: (r) => money(r.valor) },
+        {
+          title: 'Regra individual (%)',
+          render: (r) =>
+            `<input class="rate-input" inputmode="decimal" aria-label="Comissão de ${esc(r.nome)}" data-rate="vendedores" data-id="${r.id}" value="${esc(state.rules.vendedores[r.id] ?? '')}" placeholder="Herdar">`
+        },
+        {
+          title: 'Percentual efetivo',
+          num: true,
+          render: (r) => {
+            const c = projectedCommission(r, state.rules);
+            return c.rate === null
+              ? '<span class="badge">Não definida</span>'
+              : `${num(c.rate)}% <span class="badge">${c.origem}</span>`;
+          }
+        },
+        {
+          title: 'Comissão estimada',
+          num: true,
+          render: (r) => {
+            const c = projectedCommission(r, state.rules);
+            return c.valor === null ? '—' : money(c.valor);
+          }
+        }
+      ]
+    };
+  if (v === 'pedidos' || v === 'compras') {
+    const buy = v === 'compras';
+    return {
+      rows: buy ? d.compras : d.pedidos,
+      search: 'Buscar pedido, empresa ou cliente',
+      columns: [
+        {
+          title: 'Pedido / empresa',
+          render: (r) =>
+            `<button class="text-button" data-doc="${esc(r.id)}" data-buy="${buy}">${esc(`${r.empresa}/${r.numero}${r.serie || ''}`)}</button>`
+        },
+        { title: 'Inclusão', render: (r) => date(r.dia) },
+        {
+          title: buy ? 'Fornecedor' : 'Cliente',
+          cls: 'name-cell',
+          render: (r) =>
+            link(buy ? 'fornecedores' : 'clientes', buy ? r.fornecedorNome : r.clienteNome, {
+              [buy ? 'fornecedor' : 'cliente']: buy ? r.fornecedor : r.cliente
+            })
+        },
+        { title: 'Itens no recorte', num: true, render: (r) => num(r.itens.length) },
+        { title: 'Valor dos itens', num: true, render: (r) => money(r.valor) },
+        { title: 'Situação ERP', render: (r) => `<span class="badge">${esc(r.status)}</span>` }
+      ]
+    };
+  }
+  const product = v.startsWith('produtos'),
+    buy = v === 'produtos-comprados' || v === 'fornecedores',
+    key = product ? 'produto' : buy ? 'fornecedor' : 'cliente',
+    rows = product ? (buy ? d.produtosComprados : d.produtos) : buy ? d.fornecedores : d.clientes;
+  return {
+    rows,
+    search: `Buscar ${product ? 'produto' : buy ? 'fornecedor' : 'cliente'} ou código`,
+    columns: [
+      { title: 'Código', render: (r) => link(v, r.id, { [key]: r.id }, 'code') },
+      {
+        title: product ? 'Produto' : buy ? 'Fornecedor' : 'Cliente',
+        cls: 'name-cell',
+        render: (r) => link(v, r.nome, { [key]: r.id })
+      },
+      {
+        title: buy ? 'Compras em pedidos' : 'Vendas em pedidos',
+        num: true,
+        render: (r) => money(r.valor)
+      },
+      { title: 'Pedidos', num: true, render: (r) => num(r.pedidos) },
+      ...(product
+        ? [
+            {
+              title: 'Quantidade / un.',
+              num: true,
+              render: (r) => `${num(r.quantidade)} ${esc(r.unidade)}`
+            }
+          ]
+        : [
+            {
+              title: 'Ticket por pedido',
+              num: true,
+              render: (r) => money(r.pedidos ? r.valor / r.pedidos : 0)
+            }
+          ]),
+      {
+        title: 'Participação',
+        num: true,
+        render: (r) =>
+          `${num(rows.reduce((n, a) => n + a.valor, 0) ? (r.valor / rows.reduce((n, a) => n + a.valor, 0)) * 100 : 0)}%`
+      }
+    ]
+  };
+}
+function toolbar(config) {
+  return `<div class="toolbar"><label class="search-field">${icon('search')}<span class="sr-only">${config.search}</span><input id="table-search" value="${esc(state.q)}" placeholder="${config.search}"></label>${config.sellers ? `<label>Cadastro<select id="active-filter"><option value="all">Todos</option><option value="active">Ativos</option><option value="inactive">Inativos</option></select></label><label>Grupo<select id="group-filter"><option value="">Todos</option>${state.data.catalogo.grupos.map((g) => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}<option value="0">Sem grupo</option></select></label>` : ''}<label>Ordenar<select id="table-sort"><option value="valor">Maior valor</option><option value="nome">Nome / código</option><option value="pedidos">Mais pedidos</option><option value="recent">Mais recentes</option></select></label><span class="result-count" id="result-count"></span></div><div id="table-region"></div>`;
+}
+function paintTable() {
+  const config = listingConfig();
+  let rows = config.rows.filter((r) =>
+    Object.values(r)
+      .filter((v) => typeof v !== 'object')
+      .join(' ')
+      .toLocaleLowerCase('pt-BR')
+      .includes(state.q.toLocaleLowerCase('pt-BR'))
+  );
+  if (config.sellers && state.active !== 'all')
+    rows = rows.filter((r) => Boolean(r.ativo) === (state.active === 'active'));
+  rows = [...rows].sort((a, b) =>
+    state.sort === 'nome'
+      ? String(a.nome || a.numero || a.id).localeCompare(
+          String(b.nome || b.numero || b.id),
+          'pt-BR',
+          { numeric: true }
+        )
+      : state.sort === 'recent'
+        ? String(b.dia || '').localeCompare(String(a.dia || ''))
+        : Number(b[state.sort] || 0) - Number(a[state.sort] || 0)
+  );
+  const pages = Math.max(1, Math.ceil(rows.length / 20));
+  state.page = Math.min(state.page, pages);
+  const slice = rows.slice((state.page - 1) * 20, state.page * 20);
+  $('#result-count').textContent = `${rows.length} registros`;
+  $('#table-region').innerHTML =
+    (slice.length ? table(config.columns, slice) : empty()) +
+    `<div class="pagination"><span>${rows.length ? `${(state.page - 1) * 20 + 1}–${Math.min(state.page * 20, rows.length)} de ${rows.length}` : '0 registros'}</span><div><button data-page="-1" ${state.page === 1 ? 'disabled' : ''}>Anterior</button><span>${state.page} / ${pages}</span><button data-page="1" ${state.page === pages ? 'disabled' : ''}>Próxima</button></div></div>`;
+}
+function bindListing() {
+  const config = listingConfig();
+  $('#table-search').addEventListener('input', (e) => {
+    state.q = e.target.value;
+    state.page = 1;
+    paintTable();
+  });
+  $('#table-sort').value = state.sort;
+  $('#table-sort').addEventListener('change', (e) => {
+    state.sort = e.target.value;
+    paintTable();
+  });
+  if (config.sellers) {
+    $('#active-filter').value = state.active;
+    $('#active-filter').addEventListener('change', (e) => {
+      state.active = e.target.value;
+      state.page = 1;
+      paintTable();
+    });
+    $('#group-filter').value = state.params.get('grupo') || '';
+    $('#group-filter').addEventListener('change', (e) =>
+      go(state.view, { grupo: e.target.value, vendedor: null })
+    );
+  }
+  paintTable();
+}
+function contextTitle() {
+  const p = state.params,
+    d = state.data;
+  for (const [key, rows] of [
+    ['vendedor', d.catalogo.vendedores],
+    ['cliente', d.clientes],
+    ['produto', [...d.produtos, ...d.produtosComprados]],
+    ['fornecedor', d.fornecedores]
+  ])
+    if (p.has(key))
+      return rows.find((r) => r.id === Number(p.get(key)))?.nome || `${key} ${p.get(key)}`;
+  return null;
+}
+function relationActions() {
+  const d = state.data,
+    isSeller = state.params.has('vendedor'),
+    isClient = state.params.has('cliente'),
+    isProduct = state.params.has('produto');
+  if (!isSeller && !isClient && !isProduct) return '';
+  const cards = [
+    ['pedidos', 'Pedidos relacionados', `${num(d.indicadores.pedidos)} documentos`, 'document'],
+    ['dashboard', 'Valores do recorte', money(d.indicadores.vendas), 'trend'],
+    ['clientes', 'Clientes atendidos', `${num(d.clientes.length)} contas`, 'users'],
+    ['produtos', 'Produtos vendidos', `${num(d.produtos.length)} códigos`, 'box']
+  ];
+  return `<section class="entity-actions" aria-label="Explorar relações">${cards.map(([view, title, value, ic]) => `<a class="entity-action" href="${esc(href(view))}"><span class="entity-action-icon">${icon(ic)}</span><span><small>${esc(title)}</small><strong>${esc(value)}</strong></span>${icon('arrow')}</a>`).join('')}</section>`;
+}
+function listings() {
+  const d = state.data,
+    view = state.view,
+    detail = contextTitle(),
+    isSeller = ['vendedores', 'grupos'].includes(view),
+    buy = ['fornecedores', 'compras', 'produtos-comprados'].includes(view);
+  let html = head(
+    detail || views[view],
+    detail
+      ? 'Análise conectada ao recorte selecionado. Os filtros acompanham você entre as telas.'
+      : isSeller
+        ? 'Equipe, grupos, carteira e evolução das vendas. Clique em um vendedor para aprofundar.'
+        : 'Ranking do período selecionado. Clique nos códigos e nomes para investigar os documentos de origem.'
+  );
+  if (isSeller) html += tabs(['vendedores', 'grupos', 'comissoes']);
+  if (view.startsWith('produtos')) html += tabs(['produtos', 'produtos-comprados']);
+  if (buy && !d.comprasDisponiveis) {
+    $('#page').innerHTML =
+      html +
+      `<section class="panel">${empty('Filtros de vendedor, grupo ou cliente não se aplicam às compras. Remova-os nos filtros acima.')}</section>`;
+    return;
+  }
+  if (view === 'grupos') html += groupCards();
+  if (detail && !buy)
+    html +=
+      relationActions() +
+      totals() +
+      `<div class="columns">${chart()}${rank(state.params.has('cliente') ? 'Produtos comprados' : 'Clientes no recorte', state.params.has('cliente') ? d.produtos : d.clientes, state.params.has('cliente') ? 'produtos' : 'clientes', state.params.has('cliente') ? 'produto' : 'cliente')}</div>${state.params.has('vendedor') ? `<div class="tabs">${link('comissoes', 'Simular comissão deste vendedor', {}, 'tab')}</div>` : ''}`;
+  if (!detail && isSeller)
+    html += `<section class="kpis">${kpi('Vendedores cadastrados', num(d.catalogo.vendedores.length), 'Cadastro completo do ERP Falco', 'users')}${kpi('Ativos no cadastro', num(d.catalogo.vendedores.filter((v) => v.ativo).length), 'Situação atual no ERP Falco', 'users')}${kpi('Com vendas no recorte', num(d.vendedores.filter((v) => v.valor > 0).length), 'Inclui histórico de inativos', 'trend')}${kpi('Vendas da equipe', bigMoney(d.indicadores.vendas), 'Base provisória para comissão', 'wallet', true)}</section>`;
+  if (buy)
+    html += `<section class="kpis">${kpi('Pedidos de compra', num(d.compras.length), 'No período selecionado', 'document')}${kpi('Compras em pedidos', bigMoney(d.indicadores.compras), 'Valor dos itens, sem fretes adicionais', 'wallet', true)}${kpi('Fornecedores', num(d.fornecedores.length), 'Com compras no recorte', 'truck')}${kpi('Produtos comprados', num(d.produtosComprados.length), 'Códigos distintos', 'box')}</section>${detail ? `<div class="tabs">${link('compras', 'Consultar pedidos de compra', {}, 'tab')}${link('produtos-comprados', 'Explorar produtos comprados', {}, 'tab')}</div>` : ''}`;
+  $('#page').innerHTML =
+    html +
+    `<section class="panel">${panelHead(views[view], isSeller ? 'O ranking respeita o período e a atribuição de vendas' : 'Registros vinculados aos filtros ativos')}${toolbar(listingConfig())}</section>`;
+  bindListing();
+}
+function commissionSummary() {
+  const rows = state.data.vendedores.filter((r) => r.id !== 0),
+    defined = rows.filter((r) => projectedCommission(r, state.rules).rate !== null),
+    pending = rows.filter((r) => r.valor > 0 && projectedCommission(r, state.rules).rate === null),
+    amount =
+      defined.reduce((n, r) => n + Math.round(projectedCommission(r, state.rules).valor * 100), 0) /
+      100;
+  return `${kpi('Base de vendas', bigMoney(rows.reduce((n, r) => n + r.valor, 0)), 'Somente vendedores identificados', 'trend')}${kpi('Comissão estimada', defined.length ? bigMoney(amount) : 'Não definida', pending.length ? 'Total parcial · há regras pendentes' : 'Simulação, sem lançamento financeiro', 'wallet', true)}${kpi('Vendedores com regra', num(defined.length), 'Percentual próprio ou herdado', 'users')}${kpi('Com vendas, sem regra', num(pending.length), 'Aguardando os percentuais', 'target')}`;
+}
+function commissions() {
+  const d = state.data;
+  $('#page').innerHTML =
+    head(
+      'Comissões sobre vendas',
+      'Defina cenários por grupo ou vendedor. Os percentuais são locais e não alteram o ERP.',
+      'Comercial / Simulador'
+    ) +
+    tabs(['vendedores', 'grupos', 'comissoes']) +
+    `<div class="notice">Estimativa provisória. Devoluções, impostos, frete e ajustes posteriores não estão conciliados para comissão. Não utilizar como folha de pagamento.${d.indicadores.devolucoesSinalizadas ? ` Há ${d.indicadores.devolucoesSinalizadas} pedidos sinalizados com devolução neste recorte.` : ''}</div><section class="kpis" id="commission-summary">${commissionSummary()}</section><section class="panel">${panelHead('Regras da simulação', 'Vendedor → grupo → geral. O primeiro percentual definido é utilizado.')}<div class="commission-rules"><label>Percentual geral<div class="rate-field"><input class="rate-input" data-rate="geral" aria-label="Percentual geral" inputmode="decimal" placeholder="Não definido" value="${esc(state.rules.geral)}"><span>%</span></div></label><p>Deixe vazio para não definir uma regra. Digite 0 para uma regra explícita de 0%. Os percentuais são salvos neste navegador; não são compartilhados com outros usuários.</p></div><div class="form-error" id="rate-error" role="alert"></div></section>${groupCards(true)}<section class="panel">${panelHead('Comissão por vendedor', `Atribuição: vendedor ${d.filtros.papel}. Troque no filtro superior para outra visão.`)}${toolbar(listingConfig())}<div class="note">Vendedores sem identificação não recebem comissão simulada. Metas não foram inventadas: aguardam definição e período de referência.</div></section>`;
+  bindListing();
+}
+function insights() {
+  const d = state.data,
+    i = d.indicadores;
+  $('#page').innerHTML =
+    head(
+      'Pontos fortes e atenção',
+      'Sinais calculados a partir do recorte. São indicações para investigação, não conclusões sobre a equipe.'
+    ) +
+    totals() +
+    insightCards() +
+    `<div class="columns equal">${rank('Concentração por produto', d.produtos, 'produtos', 'produto')}${rank(
+      'Distribuição por vendedor',
+      d.vendedores.filter((v) => v.valor > 0),
+      'vendedores',
+      'vendedor'
+    )}</div><section class="panel">${panelHead('Limites da análise', 'Para decisões confiáveis')}<div class="note">Não exibimos lucro, margem, conversão de orçamento ou atingimento de meta sem validar as respectivas bases. ${i.devolucoesSinalizadas} pedidos do recorte estão sinalizados com devolução. A comparação é contra ${date(d.filtros.anteriorInicio)} a ${date(d.filtros.anteriorFim)}; o dia atual pode estar incompleto.</div></section>`;
+}
+function renderContext() {
+  const d = state.data,
+    keys = ['vendedor', 'grupo', 'cliente', 'produto', 'fornecedor'];
+  const labels = {
+      vendedor: 'Vendedor',
+      grupo: 'Grupo',
+      cliente: 'Cliente',
+      produto: 'Produto',
+      fornecedor: 'Fornecedor'
+    },
+    rows = {
+      vendedor: d.catalogo.vendedores,
+      grupo: d.catalogo.grupos,
+      cliente: d.clientes,
+      produto: [...d.produtos, ...d.produtosComprados],
+      fornecedor: d.fornecedores
+    };
+  const filters = keys.filter((k) => state.params.has(k));
+  $('#context').innerHTML = filters.length
+    ? `<div class="context-bar"><span class="context-label">Recorte ativo</span>${filters.map((k) => `<span class="chip">${labels[k]}: ${esc(rows[k].find((r) => r.id === Number(state.params.get(k)))?.nome || state.params.get(k))}<button data-clear="${k}" aria-label="Remover filtro de ${labels[k]}">${icon('close')}</button></span>`).join('')}<button class="text-button" id="clear-all">Limpar recorte</button></div>`
+    : '';
+}
+function companyLogo(name = '') {
+  const n = name.toLocaleLowerCase('pt-BR');
+  if (n.includes('maxplast')) return '/brand/maxplast-color.webp';
+  if (n.includes('maxsafety')) return '/brand/maxsafety-color.webp';
+  if (n.includes('maxsupply')) return '/brand/maxsupply-color.webp';
+  return '/brand/max-company.webp';
+}
+const xmlCompanies = [
+  { id: 1, nome: 'MaxPlast' },
+  { id: 2, nome: 'MaxSafety' },
+  { id: 3, nome: 'MaxSupply' },
+  { id: 4, nome: 'MaxSupply · Filial ES' }
+];
+function renderCompanies(rows) {
+  const current = state.params.get('empresa') || '';
+  const companies = [{ id: '', nome: 'Grupo consolidado' }, ...rows];
+  $('#company-cards').innerHTML = companies
+    .map(
+      (c) =>
+        `<button class="company-card ${String(c.id) === current ? 'active' : ''}" data-company="${esc(c.id)}" aria-pressed="${String(c.id) === current}" title="Filtrar por ${esc(c.nome)}"><img src="${companyLogo(c.nome)}" alt="" width="160" height="44"><span><strong>${esc(c.nome)}</strong><small>${c.id === '' ? 'Visão consolidada do grupo' : c.id === 4 ? 'Unidade do Espírito Santo' : 'Empresa do grupo'}</small></span></button>`
+    )
+    .join('');
+}
+function showXmlCompanies() {
+  $('#company').innerHTML =
+    '<option value="">Todas as empresas</option>' +
+    xmlCompanies
+      .map((company) => `<option value="${company.id}">${esc(company.nome)}</option>`)
+      .join('');
+  $('#company').value = state.params.get('empresa') || '';
+  renderCompanies(xmlCompanies);
+}
+function nfeSource(data, detailed = false) {
+  const live = data.sourcesAvailable === data.sourcesTotal;
+  const label = live
+    ? 'Fonte: XMLs de NF-e · pastas conectadas'
+    : 'Fonte: XMLs de NF-e · conexão parcial';
+  const detail = detailed
+    ? `${data.sourcesAvailable} de ${data.sourcesTotal} pastas conectadas · `
+    : '';
+  return `<div class="nfe-source"><span class="nfe-live ${live ? '' : 'is-stale'}">${label}</span><span>${detail}Verificado em ${new Date(data.checkedAt).toLocaleTimeString('pt-BR')}</span></div>`;
+}
+function documentUrl(type, row, format = 'json', download = false) {
+  const company = xmlCompanies.find((item) => item.nome === row.company)?.id;
+  return `/api/falco/documento?tipo=${type}&empresa=${company}&chave=${row.key}&formato=${format}${download ? '&baixar=1' : ''}`;
+}
+function documentRows(rows, type, limit = state.documentLimit) {
+  const shown = rows.slice(0, limit);
+  return `<div class="document-list"><div class="document-head"><span>Emissão</span><span>NF-e</span><span>Empresa</span><span>${type === 'saida' ? 'Destinatário' : 'Emitente'}</span><span>Valor</span></div>${shown.map((row) => `<button class="document-row" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)}${row.fiscalOperation?.type === 'return' ? ' · Devolução' : ''}</span><strong>${money(row.value)}</strong></button>`).join('')}</div>${rows.length > limit ? `<button class="button document-more" data-document-more>Mostrar mais · ${num(limit)} de ${num(rows.length)}</button>` : ''}`;
+}
+function nfeDrilldown(row, kind) {
+  if (kind === 'company') {
+    const company = xmlCompanies.find((item) => item.nome === row.name);
+    return company
+      ? href('clientes', {
+          empresa: company.id,
+          grupoClienteNfe: null,
+          clienteNfe: null,
+          vendedorNfe: null,
+          produtoNfe: null
+        })
+      : null;
+  }
+  if (kind === 'customerGroup')
+    return href('clientes', {
+      grupoClienteNfe: row.id,
+      clienteNfe: null,
+      vendedorNfe: null,
+      produtoNfe: null
+    });
+  if (kind === 'customer')
+    return href('vendedores', { clienteNfe: row.id, vendedorNfe: null, produtoNfe: null });
+  if (kind === 'seller') return href('emitidas', { vendedorNfe: row.name, produtoNfe: null });
+  if (kind === 'product') {
+    const company = xmlCompanies.find((item) => item.nome === row.company);
+    return href('emitidas', {
+      empresa: company?.id || null,
+      grupoClienteNfe: null,
+      produtoNfe: row.id,
+      clienteNfe: null,
+      vendedorNfe: null
+    });
+  }
+  return null;
+}
+function nfeTrail() {
+  const p = state.params;
+  const parts = [
+    link('dashboard', 'Grupo', {
+      empresa: null,
+      grupoClienteNfe: null,
+      clienteNfe: null,
+      vendedorNfe: null,
+      produtoNfe: null
+    })
+  ];
+  const company = xmlCompanies.find((row) => String(row.id) === p.get('empresa'));
+  if (company)
+    parts.push(
+      link('clientes', company.nome, {
+        grupoClienteNfe: null,
+        clienteNfe: null,
+        vendedorNfe: null,
+        produtoNfe: null
+      })
+    );
+  if (p.get('grupoClienteNfe'))
+    parts.push(
+      link('clientes', state.nfeData.scope.customerGroupName || p.get('grupoClienteNfe'), {
+        clienteNfe: null,
+        vendedorNfe: null,
+        produtoNfe: null
+      })
+    );
+  if (p.get('clienteNfe'))
+    parts.push(
+      link('vendedores', state.nfeData.scope.customerName || p.get('clienteNfe'), {
+        vendedorNfe: null,
+        produtoNfe: null
+      })
+    );
+  if (p.get('vendedorNfe'))
+    parts.push(link('emitidas', p.get('vendedorNfe'), { produtoNfe: null }));
+  if (p.get('produtoNfe')) parts.push(link('emitidas', `Produto ${p.get('produtoNfe')}`));
+  return `<nav class="nfe-trail" aria-label="Caminho dos documentos">${parts.join('<span aria-hidden="true">›</span>')}</nav>`;
+}
+function metricPanel(title, value, note) {
+  return `<div class="metric-line"><span>${esc(title)}<small>${esc(note)}</small></span><strong>${money(value)}</strong></div>`;
+}
+function averagePanel(data, label = 'documentos emitidos') {
+  const avg = periodAverages(data, today());
+  return `<article class="panel analytic-panel">${panelHead(`Médias de ${label}`, `${avg.elapsed} dias corridos · ${avg.business} dias úteis (segunda a sexta) · ${avg.selling} dias com NF-e`)}${metricPanel('Por dia corrido', avg.daily, 'Valor total ÷ dias transcorridos')}${avg.business ? metricPanel('Por dia útil', avg.businessDaily, 'Valor total ÷ dias de segunda a sexta') : ''}${avg.selling ? metricPanel('Por dia com emissão', avg.sellingDaily, 'Valor total ÷ dias com NF-e') : ''}${metricPanel('Por semana', avg.weekly, 'Média diária × 7 dias')}${metricPanel('Por mês', avg.monthly, 'Média diária × 30,4375 dias')}</article>`;
+}
+function forecastPanel(data, comparison = null, returnValue = null) {
+  if (!data) return '';
+  const forecast = monthForecast(data, today());
+  if (!forecast) return '';
+  const change = comparison?.value ? (data.value / comparison.value - 1) * 100 : null;
+  const projectedReturn =
+    returnValue == null
+      ? null
+      : Math.round(
+          (returnValue / forecast.elapsed) * (forecast.elapsed + forecast.remaining) * 100
+        ) / 100;
+  return `<article class="panel analytic-panel forecast-panel">${panelHead('Fechamento do mês', `${today().slice(0, 7)} · projeção do CRM`)}<div class="forecast-main"><div><small>REALIZADO EM NF-e</small><strong>${money(forecast.actual)}</strong></div><div><small>DOCUMENTOS PROJETADOS</small><strong>${money(forecast.projected)}</strong></div></div>${projectedReturn == null ? '' : `<div class="forecast-returns"><span>Devoluções projetadas <strong>${money(projectedReturn)}</strong></span><span>Saldo documental projetado <strong>${money(forecast.projected - projectedReturn)}</strong></span></div>`}<div class="forecast-range">Cenários dos documentos: ${money(forecast.conservative)} a ${money(forecast.optimistic)}</div>${change === null ? '' : `<p>Ritmo ante os mesmos ${forecast.elapsed} dias do mês anterior: <strong>${change >= 0 ? '+' : ''}${num(change)}%</strong>.</p>`}<p class="formula-note">${esc(forecast.formula)} ${projectedReturn == null ? '' : 'Devoluções extrapoladas pelo ritmo do mês; cobertura parcial da SEFAZ e operações não comerciais limitam a estimativa.'} Sem pedidos em carteira.</p></article>`;
+}
+function monthWithin(data) {
+  const first = `${today().slice(0, 7)}-01`;
+  if (data.period.inicio > first || data.period.fim < today()) return null;
+  const daily = data.daily.filter((row) => row.date >= first && row.date <= today());
+  return {
+    period: { inicio: first, fim: today() },
+    daily,
+    value: daily.reduce((sum, row) => sum + row.value, 0)
+  };
+}
+function revenueDashboard() {
+  const data = state.nfeData;
+  const month = state.monthData;
+  const received = state.incomingData?.returns;
+  const returned = received?.linkedToSaleValue || 0;
+  const net = data.saleValue - returned;
+  $('#page').innerHTML =
+    head(
+      'Faturamento documentado',
+      'NF-e de saída autorizadas, médias e ritmo de fechamento.',
+      'MaxCompany / Faturamento'
+    ) +
+    nfeSource(data, true) +
+    `<section class="kpis">${kpi('Total dos documentos emitidos', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas`, 'trend', false, href('emitidas', { operacao: 'venda' }))}${kpi('Devoluções de clientes confirmadas', bigMoney(returned), `${num(received?.linkedToSaleCount || 0)} vinculadas · ${num((received?.count || 0) - (received?.linkedToSaleCount || 0))} sem vínculo`, 'document', false, href('devolucoes'))}${kpi('Vendas após devoluções confirmadas', bigMoney(net), money(net), 'wallet')}${kpi('Índice de devolução confirmado', `${num(data.saleValue ? (returned / data.saleValue) * 100 : 0)}%`, 'Sobre vendas faturadas', 'target')}</section>` +
+    `<div class="revenue-equation"><span>${money(data.saleValue)} <small>vendas faturadas</small></span><b>−</b><span>${money(returned)} <small>devoluções ligadas à venda</small></span><b>=</b><strong>${money(net)}</strong></div>` +
+    `<div class="notice">Do total emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores e ${money(Math.max(0, data.value - data.saleValue - data.returns.value))} são outras operações ou operações mistas. Essas saídas não reduzem as vendas acima. ${num((received?.count || 0) - (received?.linkedToSaleCount || 0))} devoluções recebidas não têm vínculo confirmado com venda; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
+    `<div class="nfe-charts nfe-charts-secondary">${averagePanel({ ...data, value: data.saleValue })}${forecastPanel(month ? { ...month, value: month.saleValue } : null, state.previousMonthData ? { ...state.previousMonthData, value: state.previousMonthData.saleValue } : null, state.monthIncomingData?.returns?.linkedToSaleValue ?? null)}</div>` +
+    `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendedores', 'Valor das NF-e atribuído no XML', data.sellers, false, 12, 'seller')}${nfeRanking('Grupos de clientes', 'Valor consolidado dos CNPJs', data.customerGroups, false, 12, 'customerGroup')}</div>` +
+    `<article class="panel analytic-panel">${panelHead('Composição documentada', 'Valores informados no total da NF-e')}${metricPanel('Descontos', data.discountValue, 'vDesc dos XMLs')}${metricPanel('Frete destacado', data.freightValue, 'vFrete dos XMLs')}${metricPanel('Ticket médio por NF-e', data.invoiceCount ? data.value / data.invoiceCount : 0, 'Valor total ÷ NF-e')}</article>` +
+    `<p class="nfe-note">A venda é identificada pelos CFOPs dos itens da NF-e inteira. O saldo usa somente devoluções recebidas com referência a uma venda autorizada da mesma empresa e do mesmo CNPJ. Notas sem vínculo, ajustes, custos, lucro, margem, markup e impostos efetivamente pagos dependem de conciliação adicional.</p>`;
+}
+function returnsDashboard() {
+  const outgoing = state.nfeData;
+  const incoming = state.incomingData;
+  const issued = outgoing.returns;
+  const received = incoming.returns;
+  const total = issued.value + received.value;
+  const dates = issued.daily;
+  const receivedByDate = new Map();
+  for (const row of received.documents.filter((row) => row.saleReference))
+    receivedByDate.set(row.date, (receivedByDate.get(row.date) || 0) + row.value);
+  const maxGross = Math.max(1, ...dates.map((row) => row.sale));
+  const maxReturn = Math.max(1, ...dates.map((row) => receivedByDate.get(row.date) || 0));
+  const x = (index) => 50 + (index / Math.max(1, dates.length - 1)) * 610;
+  const y = (value, max) => 180 - (value / max) * 140;
+  const line = (field, max) =>
+    dates
+      .map(
+        (row, index) =>
+          `${index ? 'L' : 'M'}${x(index).toFixed(1)} ${y(field(row), max).toFixed(1)}`
+      )
+      .join(' ');
+  const groups = new Map();
+  const sellers = new Map();
+  for (const row of issued.documents) {
+    const key = row.customer.id || row.customer.name;
+    const group = groups.get(key) || { name: row.customer.name, id: key, count: 0, value: 0 };
+    group.count++;
+    group.value += row.value;
+    groups.set(key, group);
+    if (row.seller) {
+      const seller = sellers.get(row.seller) || { name: row.seller, count: 0, value: 0 };
+      seller.count++;
+      seller.value += row.value;
+      sellers.set(row.seller, seller);
+    }
+  }
+  for (const row of received.documents) {
+    const key = row.supplier.id || row.supplier.name;
+    const group = groups.get(key) || { name: row.supplier.name, id: key, count: 0, value: 0 };
+    group.count++;
+    group.value += row.value;
+    groups.set(key, group);
+  }
+  const ranked = (map) => [...map.values()].sort((a, b) => b.value - a.value);
+  const rank = (title, rows) =>
+    `<article class="panel returns-rank">${panelHead(title, 'Documentos classificados como devolução')}<div>${
+      rows.length
+        ? rows
+            .slice(0, 12)
+            .map(
+              (row) =>
+                `<div class="returns-rank-row"><span>${esc(row.name)}<small>${num(row.count)} NF-e</small></span><strong>${money(row.value)}</strong></div>`
+            )
+            .join('')
+        : '<p class="note">Nenhum registro identificado neste recorte.</p>'
+    }</div></article>`;
+  $('#page').innerHTML =
+    head(
+      'Devoluções',
+      'NF-e de devolução identificadas nas saídas do Falco e nas entradas da SEFAZ.',
+      'MaxCompany / Faturamento'
+    ) +
+    nfeSource(outgoing, true) +
+    `<section class="kpis">${kpi('Devoluções de compra emitidas', bigMoney(issued.value), `${num(issued.count)} NF-e a fornecedores`, 'wallet', true, href('emitidas', { operacao: 'devolucao' }))}${kpi('Devoluções recebidas', bigMoney(received.value), `${num(received.count)} NF-e com XML completo`, 'document', false, href('recebidas', { operacao: 'devolucao' }))}${kpi('Ligadas a vendas', bigMoney(received.linkedToSaleValue), `${num(received.linkedToSaleCount)} NF-e com referência confirmada`, 'trend', false, href('recebidas', { operacao: 'vinculada' }))}${kpi('Índice sobre vendas', `${num(outgoing.saleValue ? (received.linkedToSaleValue / outgoing.saleValue) * 100 : 0)}%`, 'Somente devoluções vinculadas', 'target')}</section>` +
+    `<div class="returns-origin"><a href="${esc(href('emitidas', { operacao: 'devolucao' }))}"><strong>${money(issued.value)}</strong><span>Saída para fornecedor · não é venda</span>${icon('arrow')}</a><a href="${esc(href('recebidas', { operacao: 'devolucao' }))}"><strong>${money(received.value)}</strong><span>Entrada classificada como devolução · ${money(received.linkedToSaleValue)} vinculados a venda</span>${icon('arrow')}</a></div>` +
+    `<article class="panel returns-chart">${panelHead('Vendas faturadas × devoluções de clientes vinculadas', 'Evolução diária · escalas independentes para leitura das duas séries')}<div class="returns-legend"><span>Vendas faturadas</span><span>Devoluções vinculadas</span></div><svg viewBox="0 0 710 210" role="img" aria-label="Evolução diária das vendas e devoluções vinculadas em escalas independentes"><path d="${line((row) => row.sale, maxGross)}" class="returns-gross-line"/><path d="${line((row) => receivedByDate.get(row.date) || 0, maxReturn)}" class="returns-return-line"/>${dates.map((row, index) => `<circle cx="${x(index)}" cy="${y(receivedByDate.get(row.date) || 0, maxReturn)}" r="3" class="returns-point"><title>${date(row.date)} · Vendas ${money(row.sale)} · Devoluções vinculadas ${money(receivedByDate.get(row.date) || 0)}</title></circle>`).join('')}</svg></article>` +
+    `<div class="nfe-charts nfe-charts-secondary">${rank('Contrapartes dos documentos', ranked(groups))}${rank('Vendedor informado nas devoluções de compra emitidas', ranked(sellers))}</div>` +
+    `<article class="panel document-panel">${panelHead('NF-e de devolução emitidas', 'Abra uma nota para ver itens, CFOP, XML e DANFE')}${documentRows(issued.documents, 'saida')}</article>` +
+    `<article class="panel document-panel">${panelHead('NF-e de devolução recebidas', 'Classificação disponível somente nos XMLs completos')}${documentRows(received.documents, 'entrada')}</article>` +
+    `<p class="nfe-note">${num(received.incompleteCount)} entradas estão somente em resumo; elas podem conter outras devoluções. ${num(received.count - received.linkedToSaleCount)} devoluções recebidas não têm venda de referência confirmada. Devoluções de compra emitidas não são descontadas das vendas. Atribuição de responsabilidade, lucro e margem exigem conciliação com pedidos e custos.</p>`;
+}
+function taxDashboard() {
+  const data = state.nfeData;
+  const incoming = state.incomingData;
+  const [selectedOrigin, selected] = (state.selectedTax || '').split(':');
+  const taxes = Object.entries(data.taxes).filter(([, amount]) => amount > 0);
+  const incomingTaxes = Object.entries(incoming.taxes).filter(([, amount]) => amount > 0);
+  const docs = selected
+    ? (selectedOrigin === 'entrada' ? incoming.documents : data.documents).filter(
+        (row) => row.taxes?.[selected] > 0
+      )
+    : [];
+  const incomingByCompany = xmlCompanies
+    .map((company) => {
+      const rows = incoming.documents.filter((row) => row.company === company.nome && row.taxes);
+      return {
+        name: company.nome,
+        full: rows.length,
+        icms: rows.reduce((sum, row) => sum + (row.taxes.ICMS || 0), 0),
+        ipi: rows.reduce((sum, row) => sum + (row.taxes.IPI || 0), 0),
+        pis: rows.reduce((sum, row) => sum + (row.taxes.PIS || 0), 0),
+        cofins: rows.reduce((sum, row) => sum + (row.taxes.COFINS || 0), 0)
+      };
+    })
+    .filter(
+      (row) =>
+        !state.params.has('empresa') ||
+        Number(state.params.get('empresa')) ===
+          xmlCompanies.find((company) => company.nome === row.name)?.id
+    );
+  const taxRow = ([name, value], origin) =>
+    `<button class="tax-row ${selected === name && selectedOrigin === origin ? 'active' : ''}" data-tax="${esc(origin)}:${esc(name)}"><span>${esc(name)}</span><strong>${money(value)}</strong></button>`;
+  $('#page').innerHTML =
+    head(
+      'Impostos destacados',
+      'Tributos extraídos item a item dos XMLs fiscais.',
+      'MaxCompany / Fiscal'
+    ) +
+    `<div class="nfe-source"><span class="nfe-live">Fonte: XMLs autorizados e distribuição SEFAZ</span><span>Saídas ${data.invoiceCount} NF-e · Entradas ${incoming.fullXmlCount} XMLs completos</span></div>` +
+    `<section class="kpis">${kpi('Crédito ICMS informado ao cliente', data.simpleIcmsCreditDocumentCount ? bigMoney(data.simpleIcmsCredit) : 'Não informado', `${num(data.simpleIcmsCreditDocumentCount)} NF-e com vCredICMSSN`, 'wallet', true)}${kpi('ICMS destacado nas entradas', bigMoney(incoming.taxes.ICMS || 0), `${num(incoming.fullXmlCount)} XMLs completos`, 'document')}${kpi('IPI destacado nas entradas', bigMoney(incoming.taxes.IPI || 0), 'Documentos recebidos', 'document')}${kpi('XMLs ainda em resumo', num(incoming.summaryOnlyCount), 'Sem dados de itens e tributos', 'target')}</section>` +
+    `<article class="panel tax-panel">${panelHead('Entradas por empresa', 'Valores destacados em XMLs completos; não representam crédito apropriado')}<div class="tax-company-table"><div class="tax-company-head"><strong>Empresa</strong><strong>XMLs</strong><strong>ICMS</strong><strong>IPI</strong><strong>PIS</strong><strong>COFINS</strong></div>${incomingByCompany.map((row) => `<a class="tax-company-row" href="${esc(href('impostos', { empresa: xmlCompanies.find((company) => company.nome === row.name)?.id }))}"><strong>${esc(row.name)}</strong><span>${num(row.full)}</span><span>${money(row.icms)}</span><span>${money(row.ipi)}</span><span>${money(row.pis)}</span><span>${money(row.cofins)}</span></a>`).join('')}</div></article>` +
+    `<article class="panel tax-panel">${panelHead('Regime nos XMLs de saída', 'CRT informado pelo emitente nas notas do período')}<div class="tax-regime-list">${data.taxRegimes.map((row) => `<a href="${esc(href('impostos', { empresa: xmlCompanies.find((company) => company.nome === row.name)?.id }))}"><strong>${esc(row.name)}</strong><span>${money(row.value)} · ${num(row.simples)} NF-e Simples · ${num(row.normal)} NF-e regime normal</span></a>`).join('')}</div><p class="formula-note">Nas empresas do Simples, o valor vCredICMSSN é crédito informado ao destinatário, não crédito tomado pela própria empresa.</p></article>` +
+    `<div class="nfe-charts nfe-charts-secondary"><article class="panel tax-panel">${panelHead('Nas NF-e emitidas', 'Clique em um tributo para rastrear as notas')}${taxes.map((row) => taxRow(row, 'saida')).join('')}</article><article class="panel tax-panel">${panelHead('Nas NF-e recebidas', 'Valores destacados nos XMLs completos')}${incomingTaxes.map((row) => taxRow(row, 'entrada')).join('')}</article></div>` +
+    (selected
+      ? `<article class="panel document-panel">${panelHead(`${selected} nas NF-e ${selectedOrigin === 'entrada' ? 'recebidas' : 'emitidas'}`, `${docs.length} notas com destaque · total ${money((selectedOrigin === 'entrada' ? incoming : data).taxes[selected])}`)}${documentRows(docs, selectedOrigin === 'entrada' ? 'entrada' : 'saida')}</article>`
+      : '') +
+    `<p class="nfe-note">Crédito efetivamente apropriado exige a escrituração/apuração fiscal; a pasta SPED consultada não contém arquivos de apuração. Os totais das entradas são apenas destaques dos XMLs completos, sem avaliação de direito ao crédito. No Simples Nacional, vCredICMSSN indica crédito informado ao comprador, sujeito às condições legais. Resumos da SEFAZ ficam fora dos totais tributários.</p>`;
+}
+function freightDashboard() {
+  const data = state.nfeData;
+  const documented = data.documents.filter((row) => row.freight.value > 0);
+  $('#page').innerHTML =
+    head(
+      'Fretes nas NF-e',
+      'Valores e modalidades registrados nas notas emitidas.',
+      'MaxCompany / Fretes'
+    ) +
+    nfeSource(data, true) +
+    `<section class="kpis">${kpi('Frete destacado', bigMoney(data.freightValue), money(data.freightValue), 'wallet', true)}${kpi('Notas com frete', num(documented.length), 'vFrete maior que zero', 'document')}${kpi('Frete / NF-e', bigMoney(data.invoiceCount ? data.freightValue / data.invoiceCount : 0), 'Sobre todas as notas', 'trend')}${kpi('Frete / valor das notas', `${num(data.value ? (100 * data.freightValue) / data.value : 0)}%`, 'vFrete ÷ vNF', 'target')}</section>` +
+    `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Modalidade declarada', 'modFrete do XML · valor destacado', data.freightModalities, false, 8)}${nfeRanking('Transportadoras identificadas', 'vFrete das notas vinculadas', data.carriers, false, 12)}</div>` +
+    `<article class="panel document-panel">${panelHead('Notas com frete', 'Clique para ver transportadora, modalidade e XML')}${documentRows(documented, 'saida')}</article>` +
+    `<p class="nfe-note">CIF e FOB seguem a modalidade declarada no XML. vFrete é o valor destacado na nota e não comprova desembolso financeiro da empresa ou custo logístico líquido.</p>`;
+}
+function outgoingDocuments() {
+  const data = state.nfeData;
+  const operation = state.params.get('operacao') || 'todos';
+  const operationTypes = { venda: 'sale', devolucao: 'return', industrial: 'industrial-return' };
+  const filtered = data.documents.filter(
+    (row) =>
+      operation === 'todos' ||
+      (operation === 'outras'
+        ? !['sale', 'return', 'industrial-return'].includes(row.fiscalOperation?.type)
+        : row.fiscalOperation?.type === operationTypes[operation])
+  );
+  $('#page').innerHTML =
+    head(
+      'NF-e emitidas',
+      'Documentos autorizados encontrados nas pastas Falco.',
+      'MaxCompany / Documentos'
+    ) +
+    nfeSource(data, true) +
+    nfeTrail() +
+    `<section class="kpis">${kpi('NF-e', num(data.invoiceCount), 'No período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('Itens', num(data.itemCount), 'Linhas de XML', 'box')}${kpi('Cancelamentos', num(data.canceledCount), 'Eventos identificados', 'target')}</section>` +
+    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir itens, impostos, XML e DANFE')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todos os documentos</option><option value="venda">Somente vendas por CFOP</option><option value="devolucao">Devoluções de compra emitidas</option><option value="industrial">Retornos de industrialização</option><option value="outras">Outras operações</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'saida')}</article>`;
+  $('#operation-filter').value = operation;
+  $('#operation-filter').onchange = (event) =>
+    go('emitidas', { operacao: event.target.value === 'todos' ? null : event.target.value });
+}
+function searchDashboard(data = null) {
+  const query = (state.params.get('q') || '').trim();
+  const body = !query
+    ? '<div class="search-empty">Digite o número ou a chave da NF-e, ou procure pelo nome de um cliente, vendedor, fornecedor ou produto.</div>'
+    : !/^\d+$/.test(query) && query.length < 3
+      ? '<div class="search-empty">Digite ao menos 3 letras para pesquisar.</div>'
+      : data?.items.length
+        ? `<div class="search-result-list">${data.items
+            .map(
+              (row) =>
+                `<button class="search-result" data-invoice="${row.key}" data-invoice-type="${row.type}" data-invoice-company="${row.companyId}" data-invoice-canceled="${row.canceled ? 'true' : 'false'}"><span class="search-result-type">${esc(row.context || 'NF-e')} · ${row.type === 'saida' ? 'emitida' : 'recebida'}${row.canceled ? ' · Cancelada' : ''}</span><strong>NF-e ${esc(row.number)}/${esc(row.series)}</strong><span class="search-result-party">${esc(row.party)}</span><span class="search-result-detail">${esc(row.company)} · ${date(row.date)}${row.seller ? ` · ${esc(row.seller)}` : ''}</span><b>${money(row.value)}</b></button>`
+            )
+            .join('')}</div>`
+        : '<div class="search-empty">Nenhuma NF-e encontrada. Confira o número, a série ou tente um nome.</div>';
+  const offset = data?.offset || 0;
+  const limit = data?.limit || 40;
+  $('#page').innerHTML =
+    head(
+      'Busca global',
+      'Encontre documentos e relações em todas as pastas consultadas, sem limite do período do dashboard.',
+      'MaxCompany / Busca'
+    ) +
+    (data
+      ? `<div class="search-count"><strong>${num(data.total)} ${data.total === 1 ? 'resultado' : 'resultados'}</strong><span>XMLs de saída do Falco${data.sources.includes('entrada') ? ' · Documentos da SEFAZ' : ''}</span></div>`
+      : '') +
+    body +
+    (data?.total > limit
+      ? `<nav class="search-pages" aria-label="Páginas da busca">${offset ? `<a class="button quiet" href="${esc(searchUrl(query, Math.max(0, offset - limit)))}">Anterior</a>` : ''}<span>${num(offset + 1)}–${num(Math.min(offset + limit, data.total))} de ${num(data.total)}</span>${offset + limit < data.total ? `<a class="button quiet" href="${esc(searchUrl(query, offset + limit))}">Próximos resultados</a>` : ''}</nav>`
+      : '');
+}
+function incomingDocuments() {
+  const data = state.incomingData;
+  const operation = state.params.get('operacao') || 'todos';
+  const filtered = data.documents.filter(
+    (row) =>
+      operation === 'todos' ||
+      (operation === 'devolucao'
+        ? row.fiscalOperation?.type === 'return'
+        : operation === 'vinculada'
+          ? Boolean(row.saleReference)
+          : row.fiscalOperation?.type !== 'return')
+  );
+  $('#page').innerHTML =
+    head(
+      'NF-e recebidas',
+      'Documentos distribuídos pela SEFAZ para os CNPJs do grupo.',
+      'MaxCompany / Documentos'
+    ) +
+    `<div class="nfe-source"><span class="nfe-live">Fonte: distribuição DF-e</span><span>${data.sourcesAvailable}/${data.sourcesTotal} empresas consultadas</span></div>` +
+    `<section class="kpis">${kpi('NF-e', num(data.invoiceCount), 'No período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e tributos', 'box')}${data.summaryOnlyCount ? kpi('Resumos', num(data.summaryOnlyCount), 'Sem itens detalhados', 'target') : ''}</section>` +
+    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir o documento recebido')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todas as entradas</option><option value="devolucao">Devoluções recebidas</option><option value="vinculada">Devoluções ligadas a venda</option><option value="demais">Demais entradas</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'entrada')}</article>`;
+  $('#operation-filter').value = operation;
+  $('#operation-filter').onchange = (event) =>
+    go('recebidas', { operacao: event.target.value === 'todos' ? null : event.target.value });
+}
+function setSidebar(collapsed) {
+  state.collapsed = collapsed;
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+  $('#sidebar-toggle').setAttribute('aria-expanded', String(!collapsed));
+  $('#sidebar-toggle').setAttribute('aria-label', collapsed ? 'Expandir menu' : 'Recolher menu');
+  localStorage.setItem('max-crm-sidebar', collapsed ? 'collapsed' : 'expanded');
+}
+function closeDrawer() {
+  $('#sidebar').classList.remove('open');
+  $('#sidebar-scrim').hidden = true;
+  $('#menu').setAttribute('aria-expanded', 'false');
+}
+function closeFilters() {
+  document.body.classList.remove('filters-open');
+  $('#filters-scrim').hidden = true;
+  $('#mobile-filters').setAttribute('aria-expanded', 'false');
+}
+function updateMobileFilters() {
+  const count = 1 + Number(Boolean(state.params.get('empresa')));
+  $('#mobile-filters').textContent =
+    `Filtros ativos: ${count} · ${$('#preset').selectedOptions[0]?.textContent || 'Período'}`;
+}
+function render() {
+  if (state.view === 'relatorios') $('#context').innerHTML = '';
+  else renderContext();
+  if (state.view === 'relatorios') reportCatalog();
+  else if (state.view === 'executivo') dashboard();
+  else if (state.view === 'comissoes') commissions();
+  else if (state.view === 'insights') insights();
+  else listings();
+}
+function reportCatalog() {
+  const query = (state.reportSearch || '').trim().toLocaleLowerCase('pt-BR');
+  const shown = reports.filter((r) =>
+    `${r.name} ${r.group}`.toLocaleLowerCase('pt-BR').includes(query)
+  );
+  $('#page').innerHTML =
+    head(
+      'Relatórios Falco',
+      'Índice dos relatórios mostrados no Falco. As análises disponíveis usam somente XMLs encontrados nas pastas.',
+      'MaxCompany / Relatórios'
+    ) +
+    `<section class="report-intro"><div><strong>${reports.length}</strong><span>relatórios identificados nas capturas</span></div><div><strong>${reports.filter((r) => r.view).length}</strong><span>com análise de XML disponível</span></div><p>Os links levam a análises relacionadas, não à reprodução integral dos relatórios do ERP. O backup MASERP.bak contém dados adicionais, mas não é uma fonte de atualização em tempo real.</p></section>` +
+    `<div class="report-toolbar"><label class="search-field">${icon('search')}<span class="sr-only">Buscar relatório</span><input id="report-search" type="search" value="${esc(state.reportSearch || '')}" placeholder="Buscar relatório ou área" autocomplete="off"></label><span>${shown.length} resultados</span></div>` +
+    (shown.length
+      ? reportGroups
+          .map((group) => {
+            const items = shown.filter((r) => r.group === group);
+            if (!items.length) return '';
+            return `<section class="report-section"><div class="report-section-title"><h2>${esc(group)}</h2><span>${items.length}</span></div><div class="report-grid">${items
+              .map(
+                (r) =>
+                  `<article class="report-card"><div><span class="report-mark">${icon('document')}</span><span class="report-state ${r.view ? 'related' : ''}">${r.view ? 'Análise de XML' : 'Sem fonte estruturada validada'}</span></div><h3>${esc(r.name.replace(/^Relatório de?\s*/i, ''))}</h3>${r.view ? link(r.view, `Abrir ${views[r.view]}`, {}, 'report-open') : '<span class="report-pending">Disponível no Falco; não reproduzido a partir das pastas</span>'}</article>`
+              )
+              .join('')}</div></section>`;
+          })
+          .join('')
+      : '<div class="empty"><h2>Nenhum relatório encontrado</h2><p>Tente outro termo de busca.</p></div>');
+  $('#report-search').oninput = (event) => {
+    const input = event.target;
+    const position = input.selectionStart;
+    state.reportSearch = input.value;
+    reportCatalog();
+    const next = $('#report-search');
+    next.focus();
+    next.setSelectionRange(position, position);
+  };
+}
+function nfeRanking(title, subtitle, rows, product = false, limit = 8, drilldown = null) {
+  const max = Math.max(1, ...rows.map((row) => row.value));
+  return `<article class="panel nfe-ranking">${panelHead(title, subtitle)}${
+    rows.length
+      ? `<div class="nfe-rank-list">${rows
+          .slice(0, limit)
+          .map((row, index) => {
+            const target = drilldown ? nfeDrilldown(row, drilldown) : null;
+            const tag = target ? 'a' : 'div';
+            return `<${tag} class="nfe-rank-row ${target ? 'nfe-rank-link' : ''}"${target ? ` href="${esc(target)}"` : ''}><span class="nfe-rank-number">${String(index + 1).padStart(2, '0')}</span><div><div class="nfe-rank-heading"><strong title="${esc(row.name)}">${esc(row.name)}</strong><span>${money(row.value)}</span></div><small>${product && row.company ? `${esc(row.company)} · ` : ''}${row.id && /^\d{14}$/.test(row.id) ? `${esc(row.id)} · ` : ''}${row.cnpjCount ? `${num(row.cnpjCount)} ${row.cnpjCount === 1 ? 'CNPJ' : 'CNPJs'} · ` : ''}${row.registrationCount && row.registrationCount !== row.cnpjCount ? `${num(row.registrationCount)} cadastros · ` : ''}${num(row.count)} ${product ? 'itens' : 'notas'}${row.registrations?.length > 1 ? ` · Cadastros: ${esc(row.registrations.map((name) => name.match(/\(\d+\)\s*$/)?.[0] || name).join(', '))}` : ''}</small><div class="nfe-bar"><span style="width:${(row.value / max) * 100}%"></span></div></div></${tag}>`;
+          })
+          .join('')}</div>`
+      : empty('Sem registros no período.')
+  }</article>`;
+}
+function nfeBreakdown() {
+  const data = state.nfeData;
+  const config = {
+    vendedores: {
+      title: 'Vendas por vendedor',
+      subtitle:
+        'Vendedores identificados no texto das NF-e emitidas, com base no valor total da nota.',
+      rows: data.sellers,
+      metric: 'Vendedores identificados',
+      note: `${num(data.unattributedCount)} de ${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} notas de venda não informam vendedor identificável. Este ranking não é a comissão nem o cadastro completo do ERP.`
+    },
+    clientes: {
+      title: state.params.has('grupoClienteNfe')
+        ? 'CNPJs e cadastros do grupo'
+        : 'Grupos de clientes',
+      subtitle: state.params.has('grupoClienteNfe')
+        ? 'Cada CNPJ abre os vendedores e, em seguida, as notas emitidas.'
+        : 'Empresas ligadas pelo CNPJ raiz ou por grupo comercial identificado.',
+      rows: state.params.has('grupoClienteNfe') ? data.customers : data.customerGroups,
+      metric: state.params.has('grupoClienteNfe') ? 'CNPJs identificados' : 'Grupos identificados',
+      note: 'Os valores vêm das NF-e de venda encontradas. Grupos comerciais de Baker Hughes, Globo e CSN são identificados pelo nome; os demais CNPJs são reunidos pela raiz. As devoluções de clientes aparecem separadamente.'
+    },
+    produtos: {
+      title: 'Produtos vendidos nas NF-e',
+      subtitle: 'Itens das NF-e de venda autorizadas ordenados pelo valor bruto.',
+      rows: data.products,
+      metric: 'Produtos identificados',
+      product: true,
+      note: 'Os valores dos itens podem diferir do total da nota por impostos, frete e outros ajustes.'
+    }
+  }[state.view];
+  $('#page').innerHTML =
+    head(config.title, config.subtitle, 'MaxCompany / Análise fiscal') +
+    nfeSource(data) +
+    nfeTrail() +
+    `<section class="kpis">${kpi('Vendas faturadas', bigMoney(data.saleValue), money(data.saleValue), 'wallet', true)}${kpi('NF-e de venda', num(data.operations.find((row) => row.type === 'sale')?.count || 0), 'Autorizadas e não canceladas', 'document')}${kpi(config.metric, num(config.rows.length), 'No período selecionado', 'users')}${kpi('Sem vendedor no XML', num(data.unattributedCount), 'Vendas sem atribuição explícita', 'target')}</section>` +
+    `<div class="nfe-breakdown">${nfeRanking(config.title, config.subtitle, config.rows, config.product, state.nfeLimit, { clientes: state.params.has('grupoClienteNfe') ? 'customer' : 'customerGroup', vendedores: 'seller', produtos: 'product' }[state.view])}${config.rows.length > state.nfeLimit ? `<button class="button nfe-more" data-nfe-more>Mostrar mais 50 · ${num(Math.min(state.nfeLimit, config.rows.length))} de ${num(config.rows.length)}</button>` : ''}</div>` +
+    `<p class="nfe-note">${esc(config.note)} A consulta é atualizada automaticamente a partir dos arquivos disponíveis nas pastas.</p>`;
+}
+function nfeFiscal() {
+  const data = state.nfeData;
+  $('#page').innerHTML =
+    head(
+      'UF e CFOP',
+      'Distribuição das NF-e emitidas por destino e dos itens por código fiscal.',
+      'MaxCompany / Fiscal'
+    ) +
+    nfeSource(data) +
+    `<section class="kpis">${kpi('Valor das notas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Notas emitidas', num(data.invoiceCount), 'Autorizadas e não canceladas', 'document')}${kpi('UF de destino', num(data.ufs.length), 'Identificadas no XML', 'target')}${kpi('CFOP distintos', num(data.cfops.length), 'Nos itens das notas', 'box')}</section>` +
+    `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Por UF de destino', 'Valor total das NF-e por UF', data.ufs, false, 28)}${nfeRanking('Por CFOP', 'Valor bruto dos itens por CFOP', data.cfops, true, 30)}</div>` +
+    `<p class="nfe-note">UF usa o valor total da nota. CFOP usa o valor bruto dos itens e pode aparecer mais de uma vez na mesma nota. Esta é uma análise relacionada aos relatórios fiscais, sem reproduzir sua apuração oficial.</p>`;
+}
+function incomingDashboard() {
+  const data = state.incomingData;
+  const rows = data.daily;
+  const max = Math.max(1, ...rows.map((row) => row.value));
+  const x = (index) => 52 + (index / Math.max(rows.length - 1, 1)) * 626;
+  const y = (value) => 190 - (value / max) * 160;
+  const path = rows
+    .map((row, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)} ${y(row.value).toFixed(1)}`)
+    .join(' ');
+  const ticks = rows.length
+    ? [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])]
+    : [];
+  const companyMax = Math.max(1, ...data.companies.map((row) => row.value));
+  const lastSync = data.sync
+    .map((row) => row.updatedAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  $('#page').innerHTML =
+    head(
+      'NF-e recebidas na SEFAZ',
+      'Documentos emitidos por fornecedores contra as empresas do grupo.',
+      'MaxCompany / Entradas'
+    ) +
+    `<div class="nfe-source"><span class="nfe-live">Fonte: distribuição DF-e da SEFAZ</span><span>${data.sourcesAvailable} de ${data.sourcesTotal} ${data.sourcesTotal === 1 ? 'empresa' : 'empresas'} · Última consulta ${lastSync ? new Date(lastSync).toLocaleString('pt-BR') : 'ainda não realizada'}</span></div>` +
+    `<section class="kpis">${kpi('Valor das entradas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('NF-e recebidas', num(data.invoiceCount), 'No período selecionado', 'document')}${kpi('XML completo', num(data.fullXmlCount), 'Documentos disponíveis integralmente', 'box')}${kpi('Somente resumo', num(data.summaryOnlyCount), 'Sem itens detalhados', 'target')}</section>` +
+    `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Entradas por dia', 'Valor das NF-e destinadas às empresas')}${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor diário das NF-e recebidas">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(max * part)}" y2="${y(max * part)}" stroke="#e4e5e9"/><text x="44" y="${y(max * part) + 4}" text-anchor="end">${short(max * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row.value)}" r="3" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} notas</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem documentos no período.')}</article><article class="panel nfe-companies">${panelHead('Por empresa destinatária', 'Valor das NF-e recebidas')}${data.companies.length ? data.companies.map((row) => `<div class="nfe-company"><div><strong>${esc(row.name)}</strong><span>${num(row.count)} notas · ${money(row.value)}</span></div><div class="nfe-bar"><span style="width:${(row.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma NF-e recebida no período.')}</article></div>` +
+    `<div class="nfe-charts nfe-products-row">${nfeRanking('Principais fornecedores emitentes', 'Valor total dos documentos recebidos', data.suppliers, false, 12)}</div>` +
+    `<p class="nfe-note">Estas são entradas/compras documentadas na SEFAZ, não faturamento de vendas. Resumos e XMLs completos são deduplicados pela chave da NF-e; cancelamentos identificados são excluídos. A SEFAZ pode liberar o XML completo apenas após manifestação do destinatário. ${link('dashboard', 'Ver visão executiva do grupo')}</p>`;
+}
+function nfeDashboard() {
+  const data = state.nfeData;
+  if (!data) return;
+  const rows = data.daily;
+  const mode = state.nfeChartMode || 'value';
+  const metric = mode === 'value' ? 'value' : 'count';
+  const maximum = Math.max(1, ...rows.map((row) => row[metric]));
+  const x = (index) => 52 + (index / Math.max(rows.length - 1, 1)) * 626;
+  const y = (value) => 190 - (value / maximum) * 160;
+  const path = rows
+    .map((row, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)} ${y(row[metric]).toFixed(1)}`)
+    .join(' ');
+  const ticks = rows.length
+    ? [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])]
+    : [];
+  const companyMax = Math.max(1, ...data.companies.map((company) => company.value));
+  $('#page').innerHTML =
+    head(
+      'Visão executiva MaxCompany',
+      'Vendas faturadas, devoluções e movimentação fiscal das empresas do grupo, com atualização automática.',
+      'MaxCompany / Inteligência'
+    ) +
+    nfeSource(data, true) +
+    `<section class="kpis">${kpi('Total das NF-e emitidas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas`, 'trend', false, href('emitidas', { operacao: 'venda' }))}${kpi('Devoluções de clientes confirmadas', bigMoney(state.incomingData?.returns?.linkedToSaleValue || 0), `${num(state.incomingData?.returns?.linkedToSaleCount || 0)} vinculadas · ${num((state.incomingData?.returns?.count || 0) - (state.incomingData?.returns?.linkedToSaleCount || 0))} sem vínculo`, 'document', false, href('devolucoes'))}${kpi('Vendas após devoluções confirmadas', bigMoney(data.saleValue - (state.incomingData?.returns?.linkedToSaleValue || 0)), 'Saldo gerencial documentado', 'wallet', false, 'faturamento')}</section>` +
+    `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Evolução diária', 'Emissão por data da NF-e')}<div class="nfe-chart-switch"><button data-chart-mode="value" class="${mode === 'value' ? 'active' : ''}">Valor</button><button data-chart-mode="count" class="${mode === 'count' ? 'active' : ''}">Quantidade</button></div>${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Gráfico de ${mode === 'value' ? 'valor' : 'quantidade'} de NF-e por dia">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(maximum * part)}" y2="${y(maximum * part)}" stroke="#e4e5e9"/><text x="44" y="${y(maximum * part) + 4}" text-anchor="end">${mode === 'value' ? short(maximum * part) : num(maximum * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[metric])}" r="${rows.length > 90 ? 1.5 : 3.2}" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} notas</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : '<div class="empty"><h2>Sem notas neste período</h2><p>Selecione outra data para consultar os XMLs disponíveis.</p></div>'}</article><article class="panel nfe-companies">${panelHead('Por empresa', 'Valor das NF-e autorizadas')}${data.companies.length ? data.companies.map((company) => `<div class="nfe-company"><div><strong>${esc(company.name)}</strong><span>${num(company.count)} notas · ${money(company.value)}</span></div><div class="nfe-bar"><span style="width:${(company.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma empresa com notas no período.')}</article></div>` +
+    `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendas por vendedor', `${num(data.unattributedCount)} notas sem vendedor no XML`, data.sellers, false, 8, 'seller')}${nfeRanking('Principais clientes', 'Valor consolidado por grupo de CNPJs', data.customerGroups, false, 8, 'customerGroup')}</div>` +
+    `<div class="nfe-charts nfe-charts-secondary nfe-products-row">${nfeRanking('Principais produtos', 'Valor bruto dos itens das NF-e', data.products, true, 8, 'product')}</div>` +
+    `<div class="nfe-charts nfe-charts-secondary">${forecastPanel(monthWithin(data))}${averagePanel(data)}</div>` +
+    `<p class="nfe-note">O total emitido inclui venda, devolução a fornecedor, retorno de industrialização e outras operações. Vendas faturadas excluem essas operações. Só a devolução recebida vinculada a uma venda autorizada da mesma empresa e do mesmo CNPJ reduz o saldo exibido. ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão só em resumo. O saldo não é receita líquida contábil.</p>`;
+  document.querySelectorAll('.nfe-companies .nfe-company').forEach((node, index) => {
+    const target = nfeDrilldown(data.companies[index], 'company');
+    if (!target) return;
+    const anchor = document.createElement('a');
+    anchor.className = 'nfe-company nfe-company-link';
+    anchor.href = target;
+    anchor.innerHTML = `<img class="nfe-company-logo" src="${companyLogo(data.companies[index].name)}" alt=""><div class="nfe-company-data">${node.innerHTML}</div>`;
+    node.replaceWith(anchor);
+  });
+}
+async function load(background = false) {
+  if (!state.user) return;
+  const seq = ++state.seq;
+  $('#refresh').disabled = true;
+  $('#page').setAttribute('aria-busy', 'true');
+  $('#connection-indicator').setAttribute('aria-label', 'Verificando conexão com o ERP Falco');
+  $('#data-source-status').textContent = 'Falco · Atualizando dados ao vivo';
+  document.body.classList.add('is-updating');
+  if (background) $('#sync-status').textContent = 'Atualizando dados…';
+  if (!background)
+    $('#page').innerHTML =
+      `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Lendo XMLs de NF-e…'}</div>`;
+  try {
+    if (state.view === 'usuarios') {
+      const users = await fetchJson('/api/users');
+      if (seq !== state.seq) return;
+      renderUsers(users);
+      $('#sync-status').textContent = 'Usuários atualizados';
+      return;
+    }
+    if (state.view === 'busca') {
+      const query = (state.params.get('q') || '').trim();
+      if (!query || (!/^\d+$/.test(query) && query.length < 3)) searchDashboard();
+      else {
+        const offset = Number(state.params.get('offset') || 0);
+        const data = await fetchJson(
+          `/api/falco/busca?q=${encodeURIComponent(query)}&offset=${Math.max(0, offset)}`
+        );
+        if (seq !== state.seq) return;
+        searchDashboard(data);
+      }
+      $('#sync-status').textContent = 'Busca atualizada';
+      $('#data-source-status').textContent = 'Falco · Busca no acervo de NF-e';
+      $('#notice').innerHTML = '';
+      return;
+    }
+    if (state.view === 'relatorios') {
+      render();
+      $('#sync-status').textContent = 'Índice disponível';
+      $('#connection-indicator').setAttribute('aria-label', 'Relatórios do Falco catalogados');
+      $('#data-source-status').textContent = 'Índice de relatórios · Capturas do Falco';
+      return;
+    }
+    if (
+      [
+        'dashboard',
+        'faturamento',
+        'devolucoes',
+        'emitidas',
+        'vendedores',
+        'clientes',
+        'produtos',
+        'fiscal',
+        'fretes',
+        'impostos'
+      ].includes(state.view)
+    ) {
+      state.nfeData = await fetchJson(`/api/falco/nfe?${state.params}`);
+      if (seq !== state.seq) return;
+      if (['dashboard', 'faturamento', 'devolucoes'].includes(state.view)) {
+        state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
+        if (seq !== state.seq) return;
+      }
+      if (state.view === 'faturamento') {
+        const monthStart = `${today().slice(0, 7)}-01`;
+        const previous = previousMonthAligned(today());
+        const monthScope = new URLSearchParams(state.params);
+        monthScope.delete('inicio');
+        monthScope.delete('fim');
+        const suffix = monthScope.toString() ? `&${monthScope}` : '';
+        [state.monthData, state.previousMonthData, state.monthIncomingData] = await Promise.all([
+          state.params.get('inicio') === monthStart && state.params.get('fim') === today()
+            ? Promise.resolve(state.nfeData)
+            : fetchJson(`/api/falco/nfe?inicio=${monthStart}&fim=${today()}${suffix}`),
+          fetchJson(`/api/falco/nfe?inicio=${previous.inicio}&fim=${previous.fim}${suffix}`),
+          state.params.get('inicio') === monthStart && state.params.get('fim') === today()
+            ? Promise.resolve(state.incomingData)
+            : fetchJson(`/api/falco/entradas?inicio=${monthStart}&fim=${today()}${suffix}`)
+        ]);
+        if (seq !== state.seq) return;
+      }
+      if (state.view === 'impostos') {
+        state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
+        if (seq !== state.seq) return;
+      }
+      showXmlCompanies();
+      if (state.view === 'dashboard') nfeDashboard();
+      else if (state.view === 'faturamento') revenueDashboard();
+      else if (state.view === 'devolucoes') returnsDashboard();
+      else if (state.view === 'emitidas') outgoingDocuments();
+      else if (state.view === 'fretes') freightDashboard();
+      else if (state.view === 'impostos') taxDashboard();
+      else if (state.view === 'fiscal') nfeFiscal();
+      else nfeBreakdown();
+      const live = state.nfeData.sourcesAvailable === state.nfeData.sourcesTotal;
+      $('#sync-status').textContent = live
+        ? `NF-e verificadas às ${new Date(state.nfeData.checkedAt).toLocaleTimeString('pt-BR')}`
+        : `Pastas indisponíveis · ${state.nfeData.sourcesAvailable}/${state.nfeData.sourcesTotal}`;
+      $('#connection-indicator').setAttribute(
+        'aria-label',
+        live ? 'XMLs do Falco consultados' : 'Conexão parcial com pastas Falco'
+      );
+      $('#data-source-status').textContent = live
+        ? 'Ao vivo · XMLs das pastas Falco'
+        : 'Conexão parcial · últimos XMLs disponíveis';
+      $('#refresh-cadence').textContent = 'Tela consulta as pastas a cada 10 s';
+      $('#notice').innerHTML = '';
+      return;
+    }
+    if (['entradas', 'recebidas'].includes(state.view)) {
+      state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
+      if (seq !== state.seq) return;
+      showXmlCompanies();
+      if (state.view === 'entradas') incomingDashboard();
+      else incomingDocuments();
+      $('#sync-status').textContent =
+        `Painel atualizado · ${new Date(state.incomingData.checkedAt).toLocaleTimeString('pt-BR')}`;
+      $('#connection-indicator').setAttribute('aria-label', 'Documentos da SEFAZ consultados');
+      $('#data-source-status').textContent = 'SEFAZ · sincronização automática na janela oficial';
+      $('#refresh-cadence').textContent = 'Tela consulta o acervo a cada 10 s';
+      $('#notice').innerHTML = '';
+      return;
+    }
+    if (legacyViews.has(state.view)) {
+      await loadLegacy(seq);
+      $('#sync-status').textContent = 'Consulta atualizada';
+      $('#connection-indicator').setAttribute('aria-label', 'Conectado ao ERP Falco');
+      $('#data-source-status').textContent = 'ERP Falco · Dados confirmados pela origem';
+      $('#notice').innerHTML = '';
+      return;
+    }
+    const data = await fetchJson(`/api/executive?${state.params}`);
+    if (seq !== state.seq) return;
+    state.data = data;
+    saveSnapshot(data);
+    $('#company').innerHTML =
+      '<option value="">Todas as empresas</option>' +
+      data.catalogo.empresas.map((e) => `<option value="${e.id}">${esc(e.nome)}</option>`).join('');
+    $('#company').value = state.params.get('empresa') || '';
+    renderCompanies(data.catalogo.empresas);
+    $('#sync-status').textContent =
+      `Atualizado às ${new Date(data.atualizadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    $('#connection-indicator').setAttribute('aria-label', 'Conectado ao ERP Falco');
+    $('#data-source-status').textContent = 'Ao vivo · dados da origem Falco';
+    $('#refresh-cadence').textContent = 'Tela consulta a origem a cada 10 s';
+    $('#notice').innerHTML = '';
+    render();
+  } catch (error) {
+    if (seq !== state.seq) return;
+    if (error.message === 'Faça login para continuar') {
+      showLogin('Sua sessão terminou. Entre novamente.');
+      return;
+    }
+    const snapshot = readSnapshot(),
+      sameScope = snapshot?.params === state.params.toString();
+    $('#sync-status').textContent = 'Fonte Falco indisponível';
+    $('#connection-indicator').setAttribute('aria-label', 'ERP Falco indisponível');
+    $('#data-source-status').textContent = 'Falco indisponível · último instantâneo preservado';
+    if (snapshot && sameScope && !legacyViews.has(state.view) && state.view !== 'dashboard') {
+      state.data = snapshot.data;
+      $('#company').innerHTML =
+        '<option value="">Todas as empresas</option>' +
+        snapshot.data.catalogo.empresas
+          .map((e) => `<option value="${e.id}">${esc(e.nome)}</option>`)
+          .join('');
+      $('#company').value = state.params.get('empresa') || '';
+      renderCompanies(snapshot.data.catalogo.empresas);
+      render();
+      $('#notice').innerHTML =
+        `<div class="source-status" role="status"><div>${icon('shield')}</div><div><strong>Exibindo o último instantâneo confirmado</strong><span>Dados consultados em ${new Date(snapshot.savedAt).toLocaleString('pt-BR')}. A atualização será retomada assim que o ERP Falco responder.</span></div><button class="text-button" data-retry>Tentar agora</button></div>`;
+    } else if (background)
+      $('#notice').innerHTML =
+        `<div class="source-status" role="status"><div>${icon('shield')}</div><div><strong>Atualização temporariamente indisponível</strong><span>Os dados já exibidos permanecem preservados.</span></div><button class="text-button" data-retry>Tentar agora</button></div>`;
+    else
+      $('#page').innerHTML =
+        `<section class="source-unavailable"><div class="source-unavailable-icon">${icon('shield')}</div><div><span class="eyebrow">ERP Falco</span><h2>Aguardando a fonte de dados</h2><p>Assim que a conexão de consulta estiver disponível, os indicadores serão carregados automaticamente. Nenhuma alteração será feita no ERP.</p><button class="button primary" data-retry>Tentar reconectar</button></div></section>`;
+  } finally {
+    if (seq === state.seq) {
+      $('#refresh').disabled = false;
+      $('#page').setAttribute('aria-busy', 'false');
+      document.body.classList.remove('is-updating');
+    }
+  }
+}
+function renderUsers(users) {
+  $('#page').innerHTML =
+    head('Usuários', 'Contas e permissões de acesso ao CRM.', 'MaxCompany / Acesso') +
+    `<section class="panel user-panel">${panelHead('Cadastrar usuário', 'Acesso completo ou acesso fiscal restrito')}<form id="user-create" class="user-create"><label>Nome<input name="name" required minlength="3" autocomplete="off"></label><label>Senha<input name="password" type="password" required minlength="4" autocomplete="new-password"></label><label>Perfil<select name="role"><option value="admin">Acesso completo</option><option value="fiscal">Fiscal</option></select></label><button class="button primary">Cadastrar</button></form><div id="user-feedback" role="status"></div>${users.map((user) => `<div class="user-row" data-user-id="${esc(user.id)}"><strong>${esc(user.name)}</strong><label>Perfil<select class="user-role" ${user.id === state.user.id ? 'disabled' : ''}><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Acesso completo</option><option value="fiscal" ${user.role === 'fiscal' ? 'selected' : ''}>Fiscal</option></select></label><form class="user-password"><label>Nova senha<input name="password" type="password" minlength="4" required autocomplete="new-password"></label><button class="button">Trocar senha</button></form>${user.id === state.user.id ? '' : '<button class="button quiet user-delete" type="button">Excluir</button>'}</div>`).join('')}</section>`;
+}
+async function refreshUsers() {
+  renderUsers(await fetchJson('/api/users'));
+}
+function userError(error) {
+  $('#user-feedback').textContent = error.message;
+}
+document.addEventListener('submit', async (event) => {
+  const form = event.target;
+  if (form.id !== 'user-create' && !form.classList.contains('user-password')) return;
+  event.preventDefault();
+  try {
+    if (form.id === 'user-create') {
+      await sendJson('/api/users', 'POST', Object.fromEntries(new FormData(form)));
+    } else {
+      const id = form.closest('[data-user-id]').dataset.userId;
+      await sendJson(`/api/users/${id}`, 'PATCH', { password: new FormData(form).get('password') });
+    }
+    await refreshUsers();
+    $('#user-feedback').textContent = 'Alteração salva.';
+  } catch (error) {
+    userError(error);
+  }
+});
+document.addEventListener('change', async (event) => {
+  if (!event.target.matches('.user-role')) return;
+  try {
+    await sendJson(`/api/users/${event.target.closest('[data-user-id]').dataset.userId}`, 'PATCH', {
+      role: event.target.value
+    });
+    await refreshUsers();
+    $('#user-feedback').textContent = 'Perfil atualizado.';
+  } catch (error) {
+    userError(error);
+    await refreshUsers();
+  }
+});
+document.addEventListener('click', async (event) => {
+  const button = event.target.closest('.user-delete');
+  if (!button) return;
+  const row = button.closest('[data-user-id]');
+  if (!window.confirm(`Excluir o acesso de ${row.querySelector('strong').textContent}?`)) return;
+  try {
+    await sendJson(`/api/users/${row.dataset.userId}`, 'DELETE');
+    await refreshUsers();
+    $('#user-feedback').textContent = 'Usuário excluído.';
+  } catch (error) {
+    userError(error);
+  }
+});
+async function loadLegacy(seq) {
+  const data = await fetchJson(
+    `/api/lista/${state.view}?${state.params}&limite=200&busca=${encodeURIComponent(state.q)}`
+  );
+  if (seq !== state.seq) return;
+  state.legacyRows = data.registros;
+  renderContext();
+  const finance = ['receber', 'pagar'].includes(state.view),
+    withValue = data.registros.filter((r) => r.valor != null),
+    total = withValue.reduce((n, r) => n + Number(r.valor || 0), 0),
+    withStatus = data.registros.filter((r) => r.situacao != null || r.conclusao != null).length;
+  $('#page').innerHTML =
+    head(
+      views[state.view],
+      finance
+        ? 'Títulos por vencimento no período. Valores nominais não representam saldo conciliado.'
+        : 'Consulta dos documentos do ERP Falco no período e empresa selecionados.'
+    ) +
+    `<section class="kpis">${kpi('Registros carregados', num(data.registros.length), 'Até 200 por consulta', 'document')}${kpi('Valor nominal', withValue.length ? bigMoney(total) : 'Não disponível', `${withValue.length} registros com valor`, 'wallet', true)}${kpi('Com situação', num(withStatus), 'Status informado pelo ERP Falco', 'target')}${kpi('Período', `${date(state.params.get('inicio'))} — ${date(state.params.get('fim'))}`, 'Filtro ativo', 'dashboard')}</section><div class="notice">Esta consulta operacional aplica período e empresa. Os filtros comerciais de vendedor, grupo, cliente e produto das análises não se aplicam aqui. Até 200 registros por consulta.</div><section class="panel"><div class="toolbar"><label class="search-field">${icon('search')}<span class="sr-only">Buscar documentos</span><input id="legacy-search" value="${esc(state.q)}" placeholder="Buscar documento ou entidade"></label><button class="button" id="legacy-go">Buscar</button><span class="result-count">${data.registros.length} registros</span></div>${
+      data.registros.length
+        ? table(
+            [
+              { title: 'Código', render: (r) => esc(r.codigo) },
+              { title: 'Data', render: (r) => date(r.data) },
+              { title: 'Entidade', cls: 'name-cell', render: (r) => esc(r.entidade) },
+              {
+                title: 'Valor nominal / itens',
+                num: true,
+                render: (r) => (r.valor == null ? '—' : money(r.valor))
+              },
+              { title: 'Situação', render: (r) => esc(r.situacao ?? r.conclusao ?? '—') }
+            ],
+            data.registros
+          )
+        : empty()
+    }</section>`;
+  $('#legacy-go').onclick = () => {
+    state.q = $('#legacy-search').value;
+    load();
+  };
+  $('#legacy-search').onkeydown = (e) => {
+    if (e.key === 'Enter') $('#legacy-go').click();
+  };
+}
+function route() {
+  if (!state.user) return;
+  clearTimeout(searchTimer);
+  const [view, query = ''] = location.hash.slice(1).split('?');
+  if (view === 'relatorios') {
+    location.hash = state.user.role === 'fiscal' ? '#emitidas' : '#dashboard';
+    return;
+  }
+  if (state.user.role === 'fiscal' && !fiscalViews.has(view)) {
+    location.hash = '#emitidas';
+    if (view !== 'emitidas') return;
+  }
+  state.view = views[view] ? view : 'dashboard';
+  document.body.dataset.view = state.view;
+  state.params = new URLSearchParams(query);
+  if (!state.params.has('fim')) state.params.set('fim', today());
+  if (!state.params.has('inicio'))
+    state.params.set('inicio', `${state.params.get('fim').slice(0, 7)}-01`);
+  state.q = '';
+  state.page = 1;
+  state.active = 'all';
+  state.nfeLimit = 50;
+  state.documentLimit = 60;
+  state.selectedTax = null;
+  state.sort = ['pedidos', 'compras'].includes(state.view) ? 'recent' : 'valor';
+  $('#start').value = state.params.get('inicio');
+  $('#end').value = state.params.get('fim');
+  $('#preset').value = matchingPreset($('#start').value, $('#end').value, today());
+  updateMobileFilters();
+  $('#role').value = state.params.get('papel') || 'interno';
+  $('#global-search').value = state.view === 'busca' ? state.params.get('q') || '' : '';
+  renderCompanies(xmlCompanies);
+  $('#section-name').textContent = views[state.view];
+  $('#navigation').innerHTML = (
+    state.user.role === 'fiscal'
+      ? [
+          [
+            'Fiscal',
+            [
+              ['emitidas', 'document'],
+              ['recebidas', 'document'],
+              ['impostos', 'document']
+            ]
+          ]
+        ]
+      : sections
+  )
+    .map(
+      ([name, items]) =>
+        `<div class="nav-label">${name}</div>${items.map(([v, ic]) => `<a class="nav-link ${state.view === v ? 'active' : ''}" title="${esc(views[v])}" ${state.view === v ? 'aria-current="page"' : ''} href="${esc(href(v))}">${icon(ic)}<span class="nav-text">${esc(views[v])}</span></a>`).join('')}`
+    )
+    .join('');
+  $('#navigation .active')?.scrollIntoView({ block: 'nearest' });
+  closeDrawer();
+  closeFilters();
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  load();
+}
+function openDoc(id, buy) {
+  const r = (buy ? state.data.compras : state.data.pedidos).find((r) => r.id === id);
+  if (!r) return;
+  $('#detail-title').textContent = `Pedido ${r.empresa}/${r.numero}${r.serie || ''}`;
+  $('#detail-content').innerHTML =
+    `<p>${date(r.dia)} · ${esc(r.status)}</p><h3>${link(buy ? 'fornecedores' : 'clientes', buy ? r.fornecedorNome : r.clienteNome, { [buy ? 'fornecedor' : 'cliente']: buy ? r.fornecedor : r.cliente })}</h3><p>Valor dos itens no recorte: <strong>${money(r.valor)}</strong></p>${table(
+      [
+        {
+          title: 'Código / produto',
+          cls: 'name-cell',
+          render: (i) =>
+            `${link(buy ? 'produtos-comprados' : 'produtos', i.produto, { produto: i.produto })}<br>${esc(i.nome)}`
+        },
+        { title: 'Quantidade', num: true, render: (i) => `${num(i.quantidade)} ${esc(i.unidade)}` },
+        { title: 'Preço unitário', num: true, render: (i) => money(i.preco) },
+        { title: 'Valor no recorte', num: true, render: (i) => money(i.valor) }
+      ],
+      r.itens
+    )}<p>Itens correspondentes aos filtros ativos. Frete e ajustes do cabeçalho não estão incluídos.</p>`;
+  $('#detail-dialog').showModal();
+}
+async function openInvoice(key, type, companyId, canceled = false) {
+  const company = Number(companyId);
+  const document = await fetchJson(
+    `/api/falco/documento?tipo=${type}&empresa=${company}&chave=${key}`
+  );
+  const url = (format, download = false) =>
+    `/api/falco/documento?tipo=${type}&empresa=${company}&chave=${key}&formato=${format}${download ? '&baixar=1' : ''}`;
+  const party = type === 'saida' ? document.customer : document.supplier;
+  const rows = document.items || [];
+  const taxes = Object.entries(document.taxes || {}).filter(([, value]) => value > 0);
+  $('#detail-title').textContent =
+    `NF-e ${document.number || key.slice(25, 34)}/${document.series || key.slice(22, 25)}`;
+  $('#detail-content').innerHTML =
+    `<div class="invoice-meta"><span>${esc(document.company)} · ${date(document.date)}</span><strong>${money(document.amount)}</strong></div>` +
+    (canceled
+      ? '<p class="invoice-canceled">Cancelamento identificado nos XMLs. Esta nota não compõe os totais autorizados do dashboard.</p>'
+      : '') +
+    `<p>${esc(party?.name || 'Não identificado')} · ${esc(party?.id || '')}</p><p class="invoice-key">Chave ${key}</p>` +
+    (document.fiscalOperation
+      ? `<p class="notice"><strong>Operação:</strong> ${esc({ sale: 'Venda faturada', return: 'Devolução', 'industrial-return': 'Retorno de industrialização', mixed: 'Operação mista', other: 'Outra operação' }[document.fiscalOperation.type] || 'Não classificada')} · ${esc(document.fiscalOperation.evidence)} · ${esc(document.operation || 'Natureza não informada')}${document.referencedKeys?.length ? `<br>NF-e referenciada: ${document.referencedKeys.map((ref) => `<a href="${esc(searchUrl(ref))}">${esc(ref)}</a>`).join(', ')}` : ''}</p>`
+      : '') +
+    `<div class="invoice-actions"><a class="button primary" href="${url('xml')}" target="_blank" rel="noopener">Ver XML</a><a class="button" href="${url('xml', true)}">Baixar XML</a>${document.hasPdf ? `<a class="button" href="${url('pdf')}" target="_blank" rel="noopener">Ver DANFE</a><a class="button" href="${url('pdf', true)}">Baixar DANFE</a>` : type === 'entrada' && document.full ? `<a class="button" href="${url('danfe')}" target="_blank" rel="noopener">Ver / imprimir DANFE</a>` : ''}</div>` +
+    (type === 'entrada' && !document.full
+      ? '<p class="notice">A SEFAZ disponibilizou apenas o resumo da NF-e. O XML completo é necessário para montar o DANFE; ainda não há dados suficientes nesta pasta.</p>'
+      : '') +
+    (document.full && rows.length
+      ? `<h3>Itens da NF-e</h3>${table(
+          [
+            {
+              title: 'Produto',
+              render: (r) =>
+                `${esc(r.name)}<small>${esc(r.code)} · NCM ${esc(r.ncm)} · CFOP ${esc(r.cfop)} · CST ${esc(r.cst)}${r.order ? ` · Pedido ${esc(r.order)}` : ''}</small>`
+            },
+            { title: 'Quantidade', num: true, render: (r) => `${num(r.quantity)} ${esc(r.unit)}` },
+            { title: 'Valor', num: true, render: (r) => money(r.value) },
+            { title: 'ICMS', num: true, render: (r) => money(r.taxes.ICMS) }
+          ],
+          rows
+        )}`
+      : '') +
+    (taxes.length
+      ? `<h3>Tributos destacados nos itens</h3><div class="invoice-taxes">${taxes.map(([name, value]) => `<span>${esc(name)}</span><strong>${money(value)}</strong>`).join('')}</div>`
+      : '') +
+    (document.freight
+      ? `<h3>Frete documentado</h3><p>${esc(document.freight.modality)} · ${money(document.freight.value)}${document.freight.carrier ? ` · ${esc(document.freight.carrier)}` : ''}</p>`
+      : '');
+  $('#detail-dialog').showModal();
+}
+document.addEventListener('click', (e) => {
+  const invoice = e.target.closest('[data-invoice]');
+  if (invoice) {
+    openInvoice(
+      invoice.dataset.invoice,
+      invoice.dataset.invoiceType,
+      invoice.dataset.invoiceCompany,
+      invoice.dataset.invoiceCanceled === 'true'
+    ).catch(() => {
+      $('#notice').innerHTML =
+        '<div class="notice">Não foi possível abrir esta NF-e agora. Tente novamente.</div>';
+    });
+    return;
+  }
+  const tax = e.target.closest('[data-tax]');
+  if (tax) {
+    state.selectedTax = tax.dataset.tax;
+    state.documentLimit = 60;
+    taxDashboard();
+    return;
+  }
+  if (e.target.closest('[data-document-more]')) {
+    state.documentLimit += 60;
+    if (state.view === 'emitidas') outgoingDocuments();
+    else if (state.view === 'recebidas') incomingDocuments();
+    else if (state.view === 'fretes') freightDashboard();
+    else if (state.view === 'impostos') taxDashboard();
+    return;
+  }
+  if (e.target.closest('[data-nfe-more]')) {
+    state.nfeLimit += 50;
+    nfeBreakdown();
+  }
+  const chartMode = e.target.closest('[data-chart-mode]');
+  if (chartMode && state.nfeData) {
+    state.nfeChartMode = chartMode.dataset.chartMode;
+    nfeDashboard();
+  }
+  const close = e.target.closest('[data-close]');
+  if (close) close.closest('dialog').close();
+  const clear = e.target.closest('[data-clear]');
+  if (clear) go(state.view, { [clear.dataset.clear]: null });
+  if (e.target.closest('#clear-all'))
+    go(state.view, { vendedor: null, grupo: null, cliente: null, produto: null, fornecedor: null });
+  const p = e.target.closest('[data-page]');
+  if (p) {
+    state.page += Number(p.dataset.page);
+    paintTable();
+  }
+  const company = e.target.closest('[data-company]');
+  if (company) changeCompany(company.dataset.company);
+  const doc = e.target.closest('[data-doc]');
+  if (doc) openDoc(doc.dataset.doc, doc.dataset.buy === 'true');
+  if (e.target.closest('[data-retry]')) load();
+  if (e.target.closest('dialog a')) e.target.closest('dialog').close();
+});
+document.addEventListener('change', (e) => {
+  const input = e.target.closest('[data-rate]');
+  if (!input) return;
+  try {
+    parseRate(input.value);
+    const next = structuredClone(state.rules);
+    if (input.dataset.rate === 'geral') next.geral = input.value;
+    else next[input.dataset.rate][input.dataset.id] = input.value;
+    localStorage.setItem('max-crm-commission-v1', JSON.stringify(next));
+    state.rules = next;
+    input.setAttribute('aria-invalid', 'false');
+    $('#rate-error').textContent = '';
+    $('#commission-summary').innerHTML = commissionSummary();
+    paintTable();
+  } catch (error) {
+    input.setAttribute('aria-invalid', 'true');
+    $('#rate-error').textContent = error.message;
+  }
+});
+$('#refresh').innerHTML = icon('refresh');
+$('#global-search-icon').innerHTML = icon('search');
+function runGlobalSearch() {
+  const query = $('#global-search').value.trim();
+  if (!query && state.view !== 'busca') return;
+  const target = searchUrl(query);
+  if (location.hash === target) load(true);
+  else location.hash = target;
+}
+$('#global-search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runGlobalSearch, 450);
+});
+$('#global-search').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    clearTimeout(searchTimer);
+    runGlobalSearch();
+  }
+});
+$('#menu').innerHTML = icon('menu');
+$('#sidebar-toggle').innerHTML = icon('arrow');
+document.querySelectorAll('[data-close]').forEach((b) => (b.innerHTML = icon('close')));
+setSidebar(state.collapsed);
+$('#sidebar-toggle').onclick = () => setSidebar(!state.collapsed);
+$('#menu').onclick = () => {
+  const open = $('#sidebar').classList.toggle('open');
+  $('#sidebar-scrim').hidden = !open;
+  $('#menu').setAttribute('aria-expanded', String(open));
+};
+$('#sidebar-scrim').onclick = closeDrawer;
+$('#mobile-filters').onclick = () => {
+  const open = !document.body.classList.contains('filters-open');
+  document.body.classList.toggle('filters-open', open);
+  $('#filters-scrim').hidden = !open;
+  $('#mobile-filters').setAttribute('aria-expanded', String(open));
+};
+$('#filters-scrim').onclick = closeFilters;
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeDrawer();
+    closeFilters();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    $('#global-search').focus();
+    $('#global-search').select();
+  }
+});
+$('#method').onclick = () => $('#method-dialog').showModal();
+$('#refresh').onclick = () => load(true);
+$('#pause').setAttribute('aria-pressed', 'false');
+$('#pause').onclick = () => {
+  state.paused = !state.paused;
+  $('#pause').textContent = state.paused ? 'Retomar' : 'Pausar';
+  $('#pause').setAttribute('aria-pressed', String(state.paused));
+};
+$('#preset').onchange = (e) => {
+  const dates = presetDates(e.target.value, today());
+  if (!dates) return;
+  [$('#start').value, $('#end').value] = dates;
+  applyPeriod();
+};
+for (const id of ['#start', '#end'])
+  $(id).onchange = () => {
+    $('#preset').value = matchingPreset($('#start').value, $('#end').value, today());
+    applyPeriod();
+  };
+function applyPeriod() {
+  const start = $('#start'),
+    end = $('#end');
+  if (!start.reportValidity() || !end.reportValidity()) return;
+  if (start.value > end.value || Date.parse(end.value) - Date.parse(start.value) > 365 * 86400000) {
+    $('#notice').innerHTML =
+      '<div class="notice">Selecione um período válido de 1 a 366 dias.</div>';
+    return;
+  }
+  $('#notice').innerHTML = '';
+  go(state.view, {
+    inicio: start.value,
+    fim: end.value,
+    empresa: $('#company').value,
+    papel: document.querySelector('.role-select').offsetParent ? $('#role').value : null
+  });
+}
+function changeCompany(id) {
+  $('#company').value = id;
+  go(state.view, {
+    empresa: id || null,
+    grupoClienteNfe: null,
+    clienteNfe: null,
+    vendedorNfe: null,
+    produtoNfe: null,
+    cliente: null,
+    vendedor: null,
+    grupo: null,
+    produto: null,
+    fornecedor: null
+  });
+}
+$('#role').onchange = () => go(state.view, { papel: $('#role').value });
+$('#company').onchange = () => changeCompany($('#company').value);
+window.addEventListener('hashchange', route);
+$('#login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const button = form.querySelector('button');
+  button.disabled = true;
+  try {
+    const user = await sendJson('/api/auth/login', 'POST', Object.fromEntries(new FormData(form)));
+    form.reset();
+    showApp(user);
+  } catch (error) {
+    $('#login-error').textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$('#logout').onclick = async () => {
+  try {
+    await sendJson('/api/auth/logout', 'POST');
+  } finally {
+    showLogin();
+  }
+};
+bootstrap();
+let resumeTimer;
+function resumeLive() {
+  if (document.hidden || state.paused) return;
+  clearTimeout(resumeTimer);
+  resumeTimer = setTimeout(() => load(true), 300);
+}
+document.addEventListener('visibilitychange', resumeLive);
+window.addEventListener('online', resumeLive);
+window.addEventListener('pageshow', resumeLive);
+window.addEventListener('focus', resumeLive);
+setInterval(() => {
+  if (
+    !state.paused &&
+    !document.hidden &&
+    !document.querySelector('dialog[open]') &&
+    !['INPUT', 'SELECT'].includes(document.activeElement.tagName) &&
+    !['comissoes', 'usuarios'].includes(state.view)
+  )
+    load(true);
+}, 10000);
