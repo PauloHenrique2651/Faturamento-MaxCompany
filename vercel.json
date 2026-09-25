@@ -5,11 +5,6 @@
   "functions": {
     "api/**/*.js": { "runtime": "nodejs20.x" }
   },
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/[...path].js" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
-  ],
   "headers": [
     {
       "source": "/(.*)",
