@@ -52,12 +52,50 @@ async function supabase(path, options = {}) {
 }
 
 async function downloadStorageObject(path) {
+  if (!/^\d+\/(?:outgoing|incoming)\/\d{44}\.(?:xml|pdf|html)$/.test(String(path || '')))
+    throw new Error('Caminho de documento fiscal inválido.');
   const base = env('SUPABASE_URL').replace(/\/$/, '');
   const key = env('SUPABASE_SERVICE_ROLE_KEY') || env('SUPABASE_SECRET_KEY');
   if (!base || !key) throw new Error('Supabase não configurado na Vercel.');
   return fetch(`${base}/storage/v1/object/fiscal-documents/${path}`, {
     headers: { apikey: key, Authorization: `Bearer ${key}` }
   });
+}
+
+function defaultStoragePath(row, extension) {
+  return `${row.company_id}/${row.direction}/${row.access_key}.${extension}`;
+}
+
+function storageCandidates(row, format) {
+  const candidates =
+    format === 'xml'
+      ? [row.xml_storage_path, defaultStoragePath(row, 'xml')]
+      : format === 'pdf'
+        ? [row.pdf_storage_path, defaultStoragePath(row, 'pdf')]
+        : [
+            row.pdf_storage_path,
+            row.danfe_storage_path,
+            defaultStoragePath(row, 'pdf'),
+            defaultStoragePath(row, 'html')
+          ];
+  const allowed = new Set(
+    format === 'xml'
+      ? [defaultStoragePath(row, 'xml')]
+      : format === 'pdf'
+        ? [defaultStoragePath(row, 'pdf')]
+        : [defaultStoragePath(row, 'pdf'), defaultStoragePath(row, 'html')]
+  );
+  return [...new Set(candidates.filter((path) => allowed.has(path)))];
+}
+
+async function firstStoredObject(row, format) {
+  const paths = [...new Set(storageCandidates(row, format).filter(Boolean))];
+  for (const path of paths) {
+    const response = await downloadStorageObject(path);
+    if (response.ok) return { path, response };
+    if (response.status !== 404 && response.status !== 400) return { path, response };
+  }
+  return null;
 }
 
 function requestBody(req) {
@@ -181,6 +219,18 @@ function documentFromCloud(row) {
     referencedKeys: source.referencedKeys || row.referenced_keys || [],
     full: Boolean(row.is_full_xml),
     canceled: Boolean(row.is_canceled),
+    documentStatus:
+      row.document_status ||
+      (row.is_canceled ? 'CANCELED' : row.is_authorized ? 'AUTHORIZED' : 'UNKNOWN'),
+    xmlStatus: row.xml_status || (row.xml_storage_path ? 'AVAILABLE' : 'PENDING'),
+    danfeStatus:
+      row.danfe_status ||
+      (row.pdf_storage_path || row.danfe_storage_path ? 'AVAILABLE' : 'PENDING'),
+    syncStatus: row.sync_status || (row.xml_storage_path ? 'SYNCED' : 'PENDING'),
+    hasXml: row.xml_status === 'AVAILABLE' || Boolean(row.xml_storage_path),
+    hasPdf: Boolean(row.pdf_storage_path),
+    hasDanfe:
+      row.danfe_status === 'AVAILABLE' || Boolean(row.pdf_storage_path || row.danfe_storage_path),
     simpleIcmsCredit: Number(source.simpleIcmsCredit || 0)
   };
 }
@@ -285,7 +335,19 @@ function baseSummary(rows, inicio, fim, direction) {
     documents: documents.map((row) => ({ ...row, value: money(row.value) })),
     filesInspected: rows.length,
     sourcesAvailable: 1,
-    sourcesTotal: 1
+    sourcesTotal: 1,
+    documentCoverage: {
+      xmlAvailable: documents.filter((row) => row.xmlStatus === 'AVAILABLE' || row.hasXml).length,
+      xmlMissing: documents.filter((row) => row.xmlStatus !== 'AVAILABLE' && !row.hasXml).length,
+      danfeAvailable: documents.filter((row) => row.danfeStatus === 'AVAILABLE' || row.hasDanfe)
+        .length,
+      danfeMissing: documents.filter((row) => row.danfeStatus !== 'AVAILABLE' && !row.hasDanfe)
+        .length,
+      syncErrors: documents.filter((row) => row.syncStatus === 'ERROR').length
+    },
+    reconciliation: [...operations.values()]
+      .map((row) => ({ ...row, value: money(row.value) }))
+      .sort((a, b) => b.value - a.value)
   };
   if (direction === 'outgoing') {
     result.customers = ranked(parties);
@@ -304,10 +366,15 @@ function baseSummary(rows, inicio, fim, direction) {
     };
   } else {
     result.suppliers = ranked(parties);
+    const returnDocuments = documents.filter((row) => row.fiscalOperation?.type === 'return');
+    const linkedReturns = returnDocuments.filter((row) => row.saleReference);
     result.returns = {
       value: money(operations.get('return')?.value || 0),
       count: operations.get('return')?.count || 0,
-      documents: documents.filter((row) => row.fiscalOperation?.type === 'return')
+      linkedToSaleCount: linkedReturns.length,
+      linkedToSaleValue: money(linkedReturns.reduce((sum, row) => sum + amount(row), 0)),
+      incompleteCount: returnDocuments.filter((row) => !row.full).length,
+      documents: returnDocuments
     };
     result.fullXmlCount = documents.filter((row) => row.full).length;
     result.summaryOnlyCount = documents.filter((row) => !row.full).length;
@@ -315,6 +382,8 @@ function baseSummary(rows, inicio, fim, direction) {
   }
   return result;
 }
+
+export { baseSummary, documentFromCloud, storageCandidates };
 
 async function handle(req, res) {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
@@ -342,6 +411,7 @@ async function handle(req, res) {
     cookie(res, 'crm_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
     return json(res, 200, { ok: true });
   }
+  if (path === '/api/health') return json(res, 200, { ok: true, source: 'Supabase' });
   const user = await currentUser(req);
   if (!user) return json(res, 401, { error: 'Sessão expirada. Entre novamente.' });
   if (path === '/api/falco/nfe' || path === '/api/executive') {
@@ -365,16 +435,29 @@ async function handle(req, res) {
     if (!row) return json(res, 404, { error: 'Documento não encontrado.' });
     const format = url.searchParams.get('formato');
     if (format === 'xml' || format === 'pdf' || format === 'danfe') {
-      const extension = format === 'xml' ? 'xml' : 'pdf';
-      const object = await downloadStorageObject(`${companyId}/${type}/${accessKey}.${extension}`);
-      if (!object.ok)
-        return json(res, 404, { error: `${extension.toUpperCase()} ainda não sincronizado.` });
-      const content = Buffer.from(await object.arrayBuffer());
+      const stored = await firstStoredObject(row, format);
+      if (!stored?.response.ok)
+        return json(res, 404, {
+          error: `${format === 'xml' ? 'XML' : 'DANFE'} ainda não sincronizado.`
+        });
+      const extension = stored.path.split('.').at(-1);
+      const content = Buffer.from(await stored.response.arrayBuffer());
       res.statusCode = 200;
       res.setHeader(
         'Content-Type',
-        extension === 'xml' ? 'application/xml; charset=utf-8' : 'application/pdf'
+        extension === 'xml'
+          ? 'application/xml; charset=utf-8'
+          : extension === 'html'
+            ? 'text/html; charset=utf-8'
+            : 'application/pdf'
       );
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      if (extension === 'html')
+        res.setHeader(
+          'Content-Security-Policy',
+          "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:"
+        );
       res.setHeader(
         'Content-Disposition',
         `${url.searchParams.get('baixar') === '1' ? 'attachment' : 'inline'}; filename="${accessKey}.${extension}"`
@@ -382,10 +465,21 @@ async function handle(req, res) {
       res.end(content);
       return;
     }
-    const pdf = await downloadStorageObject(`${companyId}/${type}/${accessKey}.pdf`);
-    return json(res, 200, { ...documentFromCloud(row), hasPdf: pdf.ok });
+    const document = documentFromCloud(row);
+    const [xml, pdf, danfe] = await Promise.all([
+      firstStoredObject(row, 'xml'),
+      firstStoredObject(row, 'pdf'),
+      firstStoredObject(row, 'danfe')
+    ]);
+    return json(res, 200, {
+      ...document,
+      hasXml: Boolean(xml?.response.ok),
+      hasPdf: Boolean(pdf?.response.ok),
+      hasDanfe: Boolean(danfe?.response.ok),
+      xmlStatus: xml?.response.ok ? 'AVAILABLE' : document.xmlStatus,
+      danfeStatus: danfe?.response.ok ? 'AVAILABLE' : document.danfeStatus
+    });
   }
-  if (path === '/api/health') return json(res, 200, { ok: true, source: 'Supabase' });
   return json(res, 404, { error: 'Rota não encontrada.' });
 }
 

@@ -91,8 +91,8 @@ function delta(value, previous) {
   const d = ((value - previous) / previous) * 100;
   return `<span class="delta ${d < 0 ? 'down' : ''}">${d > 0 ? '+' : ''}${num(d)}%</span><span>vs. período anterior</span>`;
 }
-function kpi(title, value, note, type = 'trend', featured = false, target = '') {
-  const body = `<div class="kpi-label">${esc(title)}${icon(type)}</div><strong class="kpi-value">${value}</strong><div class="kpi-note">${note}</div>`;
+function kpi(title, value, note, type = 'trend', featured = false, target = '', tooltip = '') {
+  const body = `<div class="kpi-label"${tooltip ? ` title="${esc(tooltip)}"` : ''}>${esc(title)}${icon(type)}</div><strong class="kpi-value" title="${esc(String(value).replace(/<[^>]+>/g, ''))}">${value}</strong><div class="kpi-note">${note}</div>`;
   return target
     ? `<a class="kpi kpi-link ${featured ? 'featured' : ''}" href="${esc(target.startsWith('#') ? target : href(target))}" aria-label="Abrir ${esc(title)}">${body}<span class="kpi-action">Ver detalhes ${icon('arrow')}</span></a>`
     : `<article class="kpi ${featured ? 'featured' : ''}">${body}</article>`;
@@ -574,7 +574,47 @@ function documentUrl(type, row, format = 'json', download = false) {
 }
 function documentRows(rows, type, limit = state.documentLimit) {
   const shown = rows.slice(0, limit);
-  return `<div class="document-list"><div class="document-head"><span>Emissão</span><span>NF-e</span><span>Empresa</span><span>${type === 'saida' ? 'Destinatário' : 'Emitente'}</span><span>Valor</span></div>${shown.map((row) => `<button class="document-row" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)}${row.fiscalOperation?.type === 'return' ? ' · Devolução' : ''}</span><strong>${money(row.value)}</strong></button>`).join('')}</div>${rows.length > limit ? `<button class="button document-more" data-document-more>Mostrar mais · ${num(limit)} de ${num(rows.length)}</button>` : ''}`;
+  return `<div class="document-list"><div class="document-head"><span>Emissão</span><span>NF-e</span><span>Empresa</span><span>${type === 'saida' ? 'Destinatário' : 'Emitente'}</span><span>Valor</span></div>${shown
+    .map((row) => {
+      const availability =
+        row.xmlStatus || row.danfeStatus
+          ? `<small class="document-availability"><span class="${row.xmlStatus === 'AVAILABLE' || row.hasXml ? 'available' : 'missing'}">XML ${row.xmlStatus === 'AVAILABLE' || row.hasXml ? 'disponível' : 'pendente'}</span><span class="${row.danfeStatus === 'AVAILABLE' || row.hasDanfe ? 'available' : 'missing'}">DANFE ${row.danfeStatus === 'AVAILABLE' || row.hasDanfe ? 'disponível' : 'pendente'}</span></small>`
+          : '';
+      return `<button class="document-row" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)} · ${esc(operationLabel(row.fiscalOperation?.type))}${availability}</span><strong>${money(row.value)}</strong></button>`;
+    })
+    .join(
+      ''
+    )}</div>${rows.length > limit ? `<button class="button document-more" data-document-more>Mostrar mais · ${num(limit)} de ${num(rows.length)}</button>` : ''}`;
+}
+
+function operationLabel(type) {
+  return (
+    {
+      sale: 'Venda',
+      return: 'Devolução',
+      transfer: 'Transferência',
+      bonus: 'Bonificação',
+      complementary: 'Complementar',
+      adjustment: 'Ajuste',
+      'industrial-return': 'Retorno de industrialização',
+      mixed: 'Operação mista',
+      other: 'Outra operação',
+      unknown: 'Não classificada'
+    }[type] || 'Não classificada'
+  );
+}
+
+function reconciliationPanel(data) {
+  const rows = data.reconciliation || data.operations || [];
+  const filter = (type) =>
+    ({ sale: 'venda', return: 'devolucao', 'industrial-return': 'industrial' })[type] || type;
+  return `<article class="panel reconciliation-panel">${panelHead('Reconciliação fiscal', 'Quantidade e valor das NF-e que compõem cada classificação')}<div class="reconciliation-list">${rows.length ? rows.map((row) => `<a href="${esc(href('emitidas', { operacao: filter(row.type) }))}"><span>${esc(operationLabel(row.type))}<small>${num(row.count)} NF-e</small></span><strong>${money(row.value)}</strong></a>`).join('') : '<p class="note">Nenhum documento no período.</p>'}</div></article>`;
+}
+
+function coveragePanel(data) {
+  const coverage = data.documentCoverage;
+  if (!coverage) return '';
+  return `<article class="panel reconciliation-panel">${panelHead('Documentos fiscais', 'Cobertura dos artefatos privados sincronizados')}<div class="coverage-grid"><div><strong>${num(coverage.xmlAvailable)}</strong><span>XML disponível</span></div><div><strong>${num(coverage.xmlMissing)}</strong><span>XML pendente</span></div><div><strong>${num(coverage.danfeAvailable)}</strong><span>DANFE disponível</span></div><div><strong>${num(coverage.danfeMissing)}</strong><span>DANFE pendente</span></div></div>${coverage.syncErrors ? `<p class="notice">${num(coverage.syncErrors)} documentos possuem erro de sincronização e serão tentados novamente.</p>` : ''}</article>`;
 }
 function nfeDrilldown(row, kind) {
   if (kind === 'company') {
@@ -688,6 +728,9 @@ function revenueDashboard() {
   const received = state.incomingData?.returns;
   const returned = received?.linkedToSaleValue || 0;
   const net = data.saleValue - returned;
+  const other = (data.operations || [])
+    .filter((row) => !['sale', 'return'].includes(row.type))
+    .reduce((sum, row) => sum + row.value, 0);
   $('#page').innerHTML =
     head(
       'Faturamento documentado',
@@ -695,9 +738,10 @@ function revenueDashboard() {
       'MaxCompany / Faturamento'
     ) +
     nfeSource(data, true) +
-    `<section class="kpis">${kpi('Total dos documentos emitidos', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas`, 'trend', false, href('emitidas', { operacao: 'venda' }))}${kpi('Devoluções de clientes confirmadas', bigMoney(returned), `${num(received?.linkedToSaleCount || 0)} vinculadas · ${num((received?.count || 0) - (received?.linkedToSaleCount || 0))} sem vínculo`, 'document', false, href('devolucoes'))}${kpi('Vendas após devoluções confirmadas', bigMoney(net), money(net), 'wallet')}${kpi('Índice de devolução confirmado', `${num(data.saleValue ? (returned / data.saleValue) * 100 : 0)}%`, 'Sobre vendas faturadas', 'target')}</section>` +
+    `<section class="kpis">${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas · ${money(data.saleValue)}`, 'trend', true, href('emitidas', { operacao: 'venda' }), 'Soma das NF-e classificadas como venda, autorizadas e não canceladas no período.')}${kpi('Faturamento líquido', bigMoney(net), money(net), 'wallet', false, '', 'Vendas faturadas menos devoluções de clientes confirmadas e vinculadas.')}${kpi('Devoluções confirmadas', bigMoney(returned), `${num(received?.linkedToSaleCount || 0)} vinculadas · ${money(returned)}`, 'document', false, href('devolucoes'), 'Devoluções recebidas de clientes com referência confirmada a uma venda válida.')}${kpi('Outras operações', bigMoney(other), money(other), 'box', false, href('emitidas', { operacao: 'outras' }), 'Transferências, bonificações, ajustes, complementares, mistas, outras e não classificadas.')}${kpi('Movimentação faturada', bigMoney(data.value), money(data.value), 'wallet', false, '', 'Total dos documentos emitidos considerados pela regra fiscal atual.')}${kpi('Taxa de devolução', `${num(data.saleValue ? (returned / data.saleValue) * 100 : 0)}%`, 'Devoluções confirmadas ÷ vendas faturadas', 'target')}</section>` +
     `<div class="revenue-equation"><span>${money(data.saleValue)} <small>vendas faturadas</small></span><b>−</b><span>${money(returned)} <small>devoluções ligadas à venda</small></span><b>=</b><strong>${money(net)}</strong></div>` +
     `<div class="notice">Do total emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores e ${money(Math.max(0, data.value - data.saleValue - data.returns.value))} são outras operações ou operações mistas. Essas saídas não reduzem as vendas acima. ${num((received?.count || 0) - (received?.linkedToSaleCount || 0))} devoluções recebidas não têm vínculo confirmado com venda; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
+    `<div class="nfe-charts nfe-charts-secondary">${reconciliationPanel(data)}${coveragePanel(data)}</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${averagePanel({ ...data, value: data.saleValue })}${forecastPanel(month ? { ...month, value: month.saleValue } : null, state.previousMonthData ? { ...state.previousMonthData, value: state.previousMonthData.saleValue } : null, state.monthIncomingData?.returns?.linkedToSaleValue ?? null)}</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendedores', 'Valor das NF-e atribuído no XML', data.sellers, false, 12, 'seller')}${nfeRanking('Grupos de clientes', 'Valor consolidado dos CNPJs', data.customerGroups, false, 12, 'customerGroup')}</div>` +
     `<article class="panel analytic-panel">${panelHead('Composição documentada', 'Valores informados no total da NF-e')}${metricPanel('Descontos', data.discountValue, 'vDesc dos XMLs')}${metricPanel('Frete destacado', data.freightValue, 'vFrete dos XMLs')}${metricPanel('Ticket médio por NF-e', data.invoiceCount ? data.value / data.invoiceCount : 0, 'Valor total ÷ NF-e')}</article>` +
@@ -839,7 +883,18 @@ function freightDashboard() {
 function outgoingDocuments() {
   const data = state.nfeData;
   const operation = state.params.get('operacao') || 'todos';
-  const operationTypes = { venda: 'sale', devolucao: 'return', industrial: 'industrial-return' };
+  const operationTypes = {
+    venda: 'sale',
+    devolucao: 'return',
+    industrial: 'industrial-return',
+    transfer: 'transfer',
+    bonus: 'bonus',
+    complementary: 'complementary',
+    adjustment: 'adjustment',
+    mixed: 'mixed',
+    other: 'other',
+    unknown: 'unknown'
+  };
   const filtered = data.documents.filter(
     (row) =>
       operation === 'todos' ||
@@ -856,7 +911,7 @@ function outgoingDocuments() {
     nfeSource(data, true) +
     nfeTrail() +
     `<section class="kpis">${kpi('NF-e', num(data.invoiceCount), 'No período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('Itens', num(data.itemCount), 'Linhas de XML', 'box')}${kpi('Cancelamentos', num(data.canceledCount), 'Eventos identificados', 'target')}</section>` +
-    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir itens, impostos, XML e DANFE')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todos os documentos</option><option value="venda">Somente vendas por CFOP</option><option value="devolucao">Devoluções de compra emitidas</option><option value="industrial">Retornos de industrialização</option><option value="outras">Outras operações</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'saida')}</article>`;
+    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir itens, impostos, XML e DANFE')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todos os documentos</option><option value="venda">Somente vendas por CFOP</option><option value="devolucao">Devoluções de compra emitidas</option><option value="transfer">Transferências</option><option value="bonus">Bonificações</option><option value="complementary">Complementares</option><option value="adjustment">Ajustes</option><option value="industrial">Retornos de industrialização</option><option value="mixed">Operações mistas</option><option value="other">Outras operações classificadas</option><option value="unknown">Não classificadas</option><option value="outras">Todas exceto venda/devolução/retorno</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'saida')}</article>`;
   $('#operation-filter').value = operation;
   $('#operation-filter').onchange = (event) =>
     go('emitidas', { operacao: event.target.value === 'todos' ? null : event.target.value });
@@ -1500,9 +1555,10 @@ async function openInvoice(key, type, companyId, canceled = false) {
       : '') +
     `<p>${esc(party?.name || 'Não identificado')} · ${esc(party?.id || '')}</p><p class="invoice-key">Chave ${key}</p>` +
     (document.fiscalOperation
-      ? `<p class="notice"><strong>Operação:</strong> ${esc({ sale: 'Venda faturada', return: 'Devolução', 'industrial-return': 'Retorno de industrialização', mixed: 'Operação mista', other: 'Outra operação' }[document.fiscalOperation.type] || 'Não classificada')} · ${esc(document.fiscalOperation.evidence)} · ${esc(document.operation || 'Natureza não informada')}${document.referencedKeys?.length ? `<br>NF-e referenciada: ${document.referencedKeys.map((ref) => `<a href="${esc(searchUrl(ref))}">${esc(ref)}</a>`).join(', ')}` : ''}</p>`
+      ? `<p class="notice"><strong>Operação:</strong> ${esc(operationLabel(document.fiscalOperation.type))} · ${esc(document.fiscalOperation.evidence)} · ${esc(document.operation || 'Natureza não informada')}${document.referencedKeys?.length ? `<br>NF-e referenciada: ${document.referencedKeys.map((ref) => `<a href="${esc(searchUrl(ref))}">${esc(ref)}</a>`).join(', ')}` : ''}</p>`
       : '') +
-    `<div class="invoice-actions"><a class="button primary" href="${url('xml')}" target="_blank" rel="noopener">Ver XML</a><a class="button" href="${url('xml', true)}">Baixar XML</a>${document.hasPdf ? `<a class="button" href="${url('pdf')}" target="_blank" rel="noopener">Ver DANFE</a><a class="button" href="${url('pdf', true)}">Baixar DANFE</a>` : type === 'entrada' && document.full ? `<a class="button" href="${url('danfe')}" target="_blank" rel="noopener">Ver / imprimir DANFE</a>` : ''}</div>` +
+    `<div class="document-status"><span class="${document.hasXml ? 'available' : 'missing'}">XML: ${document.hasXml ? 'Disponível' : 'Indisponível'}</span><span class="${document.hasDanfe || document.hasPdf ? 'available' : 'missing'}">DANFE: ${document.hasDanfe || document.hasPdf ? 'Disponível' : 'Indisponível'}</span><span>Status: ${esc(document.documentStatus || (canceled ? 'CANCELED' : 'AUTHORIZED'))}</span></div>` +
+    `<div class="invoice-actions">${document.hasXml ? `<a class="button primary" href="${url('xml')}" target="_blank" rel="noopener">Ver XML</a><a class="button" href="${url('xml', true)}">Baixar XML</a>` : ''}${document.hasPdf ? `<a class="button" href="${url('pdf')}" target="_blank" rel="noopener">Ver DANFE</a><a class="button" href="${url('pdf', true)}">Baixar DANFE</a>` : document.hasDanfe ? `<a class="button" href="${url('danfe')}" target="_blank" rel="noopener">Ver / imprimir DANFE</a><a class="button" href="${url('danfe', true)}">Baixar DANFE</a>` : ''}</div>` +
     (type === 'entrada' && !document.full
       ? '<p class="notice">A SEFAZ disponibilizou apenas o resumo da NF-e. O XML completo é necessário para montar o DANFE; ainda não há dados suficientes nesta pasta.</p>'
       : '') +

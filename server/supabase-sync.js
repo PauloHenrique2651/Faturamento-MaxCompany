@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { renderDanfe } from './danfe.js';
 import { readNfeSummary, readOutgoingDocument } from './nfe-files.js';
 import {
   readIncomingDocument,
@@ -196,30 +197,135 @@ async function uploadObject(path, content, contentType) {
   });
 }
 
+export function artifactPaths(row, direction) {
+  const companyId = companies.get(row.company);
+  if (!companyId || !/^\d{44}$/.test(String(row.key || '')))
+    throw new Error('Documento fiscal sem empresa ou chave válida.');
+  const base = `${companyId}/${direction}/${row.key}`;
+  return { id: base, xml: `${base}.xml`, pdf: `${base}.pdf`, danfe: `${base}.html` };
+}
+
+function eligibleArtifact(row, direction) {
+  return direction === 'outgoing' || Boolean(row.full);
+}
+
+function retryReady(state, id, now) {
+  const retryAt = Date.parse(state.artifactFailures?.[id]?.nextRetryAt || '');
+  return !Number.isFinite(retryAt) || retryAt <= now;
+}
+
+export function selectArtifactBatch(outgoing, incoming, state, limit, now = Date.now()) {
+  const queues = [
+    outgoing.filter(
+      (row) =>
+        eligibleArtifact(row, 'outgoing') &&
+        !state.completedDocuments?.[artifactPaths(row, 'outgoing').id] &&
+        retryReady(state, artifactPaths(row, 'outgoing').id, now)
+    ),
+    incoming.filter(
+      (row) =>
+        eligibleArtifact(row, 'incoming') &&
+        !state.completedDocuments?.[artifactPaths(row, 'incoming').id] &&
+        retryReady(state, artifactPaths(row, 'incoming').id, now)
+    )
+  ];
+  const selected = [];
+  for (let index = 0; selected.length < limit && queues.some((queue) => queue.length); index++) {
+    const directionIndex = index % queues.length;
+    const row = queues[directionIndex].shift();
+    if (row) selected.push({ row, direction: directionIndex ? 'incoming' : 'outgoing' });
+  }
+  return selected;
+}
+
+async function patchDocument(row, direction, values) {
+  const companyId = companies.get(row.company);
+  const filters = new URLSearchParams({
+    company_id: `eq.${companyId}`,
+    direction: `eq.${direction}`,
+    access_key: `eq.${row.key}`
+  });
+  await request(`/rest/v1/fiscal_documents?${filters}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify(values)
+  });
+}
+
+async function patchArtifactStatus(row, direction, values) {
+  try {
+    await patchDocument(row, direction, values);
+  } catch (error) {
+    // Compatibilidade temporária enquanto a migration aditiva ainda não foi aplicada.
+    if (!/column|schema cache|PGRST204/i.test(String(error.message))) throw error;
+    const legacy = Object.fromEntries(
+      Object.entries(values).filter(([key]) =>
+        ['xml_storage_path', 'pdf_storage_path'].includes(key)
+      )
+    );
+    if (Object.keys(legacy).length) await patchDocument(row, direction, legacy);
+  }
+}
+
+function recordFailure(state, id, error) {
+  state.artifactFailures ||= {};
+  const previous = state.artifactFailures[id] || { attempts: 0 };
+  const attempts = previous.attempts + 1;
+  const minutes = Math.min(360, 2 ** Math.min(attempts, 8));
+  state.artifactFailures[id] = {
+    attempts,
+    error: String(error.message || error).slice(0, 240),
+    failedAt: new Date().toISOString(),
+    nextRetryAt: new Date(Date.now() + minutes * 60_000).toISOString()
+  };
+}
+
 async function uploadDocumentArtifacts(row, direction, state) {
   const companyId = companies.get(row.company);
-  const artifactId = `${companyId}/${direction}/${row.key}`;
-  if (state.uploadedArtifacts?.[artifactId]) return 0;
+  const paths = artifactPaths(row, direction);
   const document =
     direction === 'outgoing'
       ? await readOutgoingDocument(companyId, row.key)
       : await readIncomingDocument(companyId, row.key);
-  if (!document?.xml) return 0;
-  try {
-    await uploadObject(`${artifactId}.xml`, Buffer.from(document.xml, 'utf8'), 'application/xml');
-  } catch (error) {
-    if (!String(error.message).includes('409')) throw error;
-  }
-  if (direction === 'outgoing' && document.pdfPath) {
-    try {
-      await uploadObject(`${artifactId}.pdf`, await readFile(document.pdfPath), 'application/pdf');
-    } catch (error) {
-      if (!String(error.message).includes('409')) throw error;
+  if (!document?.xml || (direction === 'incoming' && !document.row?.full))
+    throw new Error('XML completo autorizado não localizado na origem.');
+  const uploadedAt = new Date().toISOString();
+  const uploadOnce = async (path, content, type) => {
+    if (!state.uploadedArtifacts?.[path]) {
+      try {
+        await uploadObject(path, content, type);
+      } catch (error) {
+        if (!String(error.message).includes('409')) throw error;
+      }
+      state.uploadedArtifacts ||= {};
+      state.uploadedArtifacts[path] = uploadedAt;
     }
+  };
+  await uploadOnce(paths.xml, Buffer.from(document.xml, 'utf8'), 'application/xml');
+  let pdfPath = null;
+  let danfePath = null;
+  if (document.pdfPath) {
+    await uploadOnce(paths.pdf, await readFile(document.pdfPath), 'application/pdf');
+    pdfPath = paths.pdf;
+  } else {
+    await uploadOnce(paths.danfe, Buffer.from(renderDanfe(document.xml), 'utf8'), 'text/html');
+    danfePath = paths.danfe;
   }
-  state.uploadedArtifacts ||= {};
-  state.uploadedArtifacts[artifactId] = new Date().toISOString();
-  return 1;
+  await patchArtifactStatus(row, direction, {
+    xml_storage_path: paths.xml,
+    pdf_storage_path: pdfPath,
+    danfe_storage_path: danfePath,
+    xml_status: 'AVAILABLE',
+    danfe_status: 'AVAILABLE',
+    sync_status: 'SYNCED',
+    sync_attempts: (state.artifactFailures?.[paths.id]?.attempts || 0) + 1,
+    last_sync_error: null,
+    last_sync_at: uploadedAt
+  });
+  state.completedDocuments ||= {};
+  state.completedDocuments[paths.id] = uploadedAt;
+  if (state.artifactFailures) delete state.artifactFailures[paths.id];
+  return { uploaded: 1, generatedDanfe: Number(Boolean(danfePath)), paths };
 }
 
 async function updateRun(id, values) {
@@ -245,9 +351,11 @@ export async function syncSupabaseFromFalco() {
   try {
     const state = await readState();
     const end = todayInBrazil();
-    const start = state.lastSuccessAt
-      ? [settings.startDate, shiftDays(end, -settings.lookbackDays)].sort().at(-1)
-      : settings.startDate;
+    const backfillPending = settings.artifacts && !state.artifactBackfillComplete;
+    const start =
+      state.lastSuccessAt && !backfillPending
+        ? [settings.startDate, shiftDays(end, -settings.lookbackDays)].sort().at(-1)
+        : settings.startDate;
     await request('/rest/v1/crm_sync_runs?source=eq.falco-local&status=eq.running', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
@@ -274,21 +382,52 @@ export async function syncSupabaseFromFalco() {
     await upsertDocuments([...outgoingRows, ...incomingRows]);
     let artifactCount = 0;
     let artifactAttempts = 0;
+    let artifactErrors = 0;
+    let generatedDanfeCount = 0;
     if (settings.artifacts) {
-      for (const row of outgoing.documents) {
-        if (artifactAttempts >= settings.artifactBatchSize) break;
+      const batch = selectArtifactBatch(
+        outgoing.documents,
+        incoming.documents,
+        state,
+        settings.artifactBatchSize
+      );
+      for (const { row, direction } of batch) {
         artifactAttempts++;
-        artifactCount += await uploadDocumentArtifacts(row, 'outgoing', state);
+        const paths = artifactPaths(row, direction);
+        try {
+          const result = await uploadDocumentArtifacts(row, direction, state);
+          artifactCount += result.uploaded;
+          generatedDanfeCount += result.generatedDanfe;
+        } catch (error) {
+          artifactErrors++;
+          recordFailure(state, paths.id, error);
+          try {
+            await patchArtifactStatus(row, direction, {
+              sync_status: 'ERROR',
+              sync_attempts: state.artifactFailures[paths.id].attempts,
+              last_sync_error: state.artifactFailures[paths.id].error,
+              last_sync_at: new Date().toISOString()
+            });
+          } catch {
+            // A falha do registro não interrompe o restante do backfill.
+          }
+        }
       }
-      for (const row of incoming.documents) {
-        if (artifactAttempts >= settings.artifactBatchSize) break;
-        artifactAttempts++;
-        artifactCount += await uploadDocumentArtifacts(row, 'incoming', state);
-      }
+      const remaining = selectArtifactBatch(
+        outgoing.documents,
+        incoming.documents,
+        state,
+        1,
+        Number.MAX_SAFE_INTEGER
+      );
+      state.artifactBackfillComplete = remaining.length === 0;
     }
     state.lastSuccessAt = new Date().toISOString();
     state.uploadedArtifacts = Object.fromEntries(
-      Object.entries(state.uploadedArtifacts || {}).slice(-20000)
+      Object.entries(state.uploadedArtifacts || {}).slice(-100000)
+    );
+    state.completedDocuments = Object.fromEntries(
+      Object.entries(state.completedDocuments || {}).slice(-50000)
     );
     await saveState(state);
     const details = {
@@ -297,7 +436,12 @@ export async function syncSupabaseFromFalco() {
       userCount,
       outgoingSources: `${outgoing.sourcesAvailable}/${outgoing.sourcesTotal}`,
       incomingSources: `${incoming.sourcesAvailable}/${incoming.sourcesTotal}`,
-      sefaz
+      sefaz,
+      artifactAttempts,
+      artifactErrors,
+      generatedDanfeCount,
+      artifactBackfillComplete: Boolean(state.artifactBackfillComplete),
+      pendingArtifactFailures: Object.keys(state.artifactFailures || {}).length
     };
     if (runId)
       await updateRun(runId, {
@@ -315,7 +459,10 @@ export async function syncSupabaseFromFalco() {
       lastError: null,
       outgoingCount: outgoingRows.length,
       incomingCount: incomingRows.length,
-      artifactCount
+      artifactCount,
+      artifactAttempts,
+      artifactErrors,
+      artifactBackfillComplete: Boolean(state.artifactBackfillComplete)
     };
     return readSupabaseSyncStatus();
   } catch (error) {

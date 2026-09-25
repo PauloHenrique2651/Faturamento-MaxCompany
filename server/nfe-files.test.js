@@ -4,7 +4,7 @@ import { parseNfeXml } from './nfe-files.js';
 
 const key = '35260900000000000000550010000000011000000010';
 const invoice = (status = '100', type = '1') =>
-  `<nfeProc><NFe><infNFe><ide><tpNF>${type}</tpNF><dhEmi>2026-09-24T15:00:00-03:00</dhEmi></ide><total><ICMSTot><vNF>129.90</vNF></ICMSTot></total></infNFe></NFe><protNFe><infProt><cStat>${status}</cStat></infProt></protNFe></nfeProc>`;
+  `<nfeProc><NFe><infNFe Id="NFe${key}"><ide><tpNF>${type}</tpNF><dhEmi>2026-09-24T15:00:00-03:00</dhEmi></ide><total><ICMSTot><vNF>129.90</vNF></ICMSTot></total></infNFe></NFe><protNFe><infProt><chNFe>${key}</chNFe><cStat>${status}</cStat></infProt></protNFe></nfeProc>`;
 
 test('lê valor e data da NF-e de saída autorizada', () => {
   const result = parseNfeXml(invoice(), key, 'invoice', 'MaxPlast');
@@ -15,6 +15,11 @@ test('lê valor e data da NF-e de saída autorizada', () => {
   assert.equal(result.authorized, true);
   assert.equal(parseNfeXml(invoice('100', '0'), key, 'invoice', 'MaxPlast'), null);
   assert.equal(parseNfeXml(invoice('101'), key, 'invoice', 'MaxPlast')?.authorized, false);
+});
+
+test('rejeita XML cuja chave interna diverge do arquivo', () => {
+  const divergent = invoice().replaceAll(key, '35260900000000000000550010000000021000000020');
+  assert.equal(parseNfeXml(divergent, key, 'invoice', 'MaxPlast'), null);
 });
 
 test('não inclui notas do ambiente de homologação nos totais', () => {
@@ -33,7 +38,7 @@ test('aceita somente evento de cancelamento registrado', () => {
 });
 
 test('extrai destinatário e itens sem confundir com o valor total da nota', () => {
-  const xml = `<nfeProc><NFe><infNFe><ide><tpNF>1</tpNF><dEmi>2026-09-24</dEmi></ide><dest><CNPJ>12345678000190</CNPJ><xNome>Cliente Exemplo</xNome></dest><det><prod><cProd>A1</cProd><xProd>Produto A</xProd><vProd>100.00</vProd></prod></det><total><ICMSTot><vNF>129.90</vNF></ICMSTot></total></infNFe></NFe><protNFe><infProt><cStat>100</cStat></infProt></protNFe></nfeProc>`;
+  const xml = `<nfeProc><NFe><infNFe Id="NFe${key}"><ide><tpNF>1</tpNF><dEmi>2026-09-24</dEmi></ide><dest><CNPJ>12345678000190</CNPJ><xNome>Cliente Exemplo</xNome></dest><det><prod><cProd>A1</cProd><xProd>Produto A</xProd><vProd>100.00</vProd></prod></det><total><ICMSTot><vNF>129.90</vNF></ICMSTot></total></infNFe></NFe><protNFe><infProt><chNFe>${key}</chNFe><cStat>100</cStat></infProt></protNFe></nfeProc>`;
   const result = parseNfeXml(xml, key, 'invoice', 'MaxPlast');
   assert.deepEqual(result.customer, { id: '12345678000190', name: 'Cliente Exemplo' });
   assert.equal(result.items[0].code, 'A1');

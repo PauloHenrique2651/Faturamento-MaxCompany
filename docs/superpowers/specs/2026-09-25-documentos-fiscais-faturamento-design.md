@@ -80,4 +80,3 @@ Nenhum segredo, XML ou PDF entrará no Git ou no diretório público. A API vali
 Serão testados venda, devolução, cancelamento, devolução cancelada, transferência, complementar, ajuste, mista, não classificada, XML autorizado, XML divergente, DANFE existente/ausente, duplicidade, retry e avanço além do primeiro lote.
 
 A entrega incluirá formatação, sintaxe, testes, verificação estrutural, amostra real contra XML do Falco, commit, push, espera do deploy e validação do domínio. Sem sessão autenticada utilizável, a limitação da validação funcional será registrada objetivamente.
-

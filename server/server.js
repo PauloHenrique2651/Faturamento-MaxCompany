@@ -116,21 +116,27 @@ async function api(req, res, url, user) {
     if (
       !document ||
       (formato === 'pdf' && !document.pdfPath) ||
-      (formato === 'danfe' && (tipo !== 'entrada' || !document.row.full))
+      (formato === 'danfe' && !document.xml)
     )
       return json(res, 404, { error: 'Documento não encontrado' });
     if (formato === 'json')
       return json(res, 200, {
         ...document.row,
         company: ['MaxPlast', 'MaxSafety', 'MaxSupply', 'MaxSupply · Filial ES'][empresa - 1],
+        hasXml: true,
         hasPdf: Boolean(document.pdfPath),
+        hasDanfe: Boolean(document.pdfPath || document.xml),
+        xmlStatus: 'AVAILABLE',
+        danfeStatus: document.pdfPath || document.xml ? 'AVAILABLE' : 'MISSING',
+        syncStatus: 'LOCAL',
+        documentStatus: document.row.canceled ? 'CANCELED' : 'AUTHORIZED',
         full: tipo === 'saida' || document.row.full
       });
     if (formato === 'danfe') {
       const body = renderDanfe(document.xml);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Disposition': 'inline',
+        'Content-Disposition': `${url.searchParams.get('baixar') === '1' ? 'attachment' : 'inline'}; filename="${chave}.html"`,
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff'
       });

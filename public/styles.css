@@ -461,6 +461,65 @@ body[data-view='fiscal'] .role-select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.document-availability {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10px;
+}
+.available {
+  color: #0b6b50;
+}
+.missing {
+  color: #9a5b12;
+}
+.document-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.document-status span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.reconciliation-list {
+  display: grid;
+}
+.reconciliation-list a {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  color: inherit;
+}
+.reconciliation-list small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.coverage-grid div {
+  display: grid;
+  gap: 3px;
+  padding: 18px 20px;
+  background: var(--surface);
+}
+.coverage-grid strong {
+  font-size: 24px;
+}
+.coverage-grid span {
+  color: var(--muted);
+  font-size: 11px;
+}
 .document-more {
   margin: 18px 20px;
 }
@@ -510,6 +569,9 @@ body[data-view='fiscal'] .role-select {
   .document-entity {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+  .document-availability {
+    flex-wrap: wrap;
   }
   .forecast-main {
     grid-template-columns: 1fr;

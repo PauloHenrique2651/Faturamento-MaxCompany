@@ -30,3 +30,14 @@ test('separa venda, devolução de compra e retorno de industrialização pelo C
     'mixed'
   );
 });
+
+test('classifica transferência, bonificação, complemento, ajuste e desconhecida', () => {
+  const classify = (purpose, cfop, operation = '') =>
+    classifyFiscalOperation({ purpose, operation, items: cfop ? [{ cfop }] : [] }).type;
+  assert.equal(classify('1', '5152'), 'transfer');
+  assert.equal(classify('1', '5910'), 'bonus');
+  assert.equal(classify('2', '5102'), 'complementary');
+  assert.equal(classify('3', '5102'), 'adjustment');
+  assert.equal(classify('1', ''), 'unknown');
+  assert.equal(classify('1', '5949'), 'other');
+});

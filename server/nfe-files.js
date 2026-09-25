@@ -75,7 +75,10 @@ export function parseNfeXml(xml, key, kind, company) {
   }
   const invoice = doc.nfeProc?.NFe?.infNFe;
   const protocol = doc.nfeProc?.protNFe?.infProt;
-  if (!invoice) return null;
+  if (!invoice || !protocol || !/^\d{44}$/.test(key)) return null;
+  const protocolKey = String(protocol.chNFe || '').replace(/^NFe/, '');
+  const invoiceKey = String(invoice['@_Id'] || '').replace(/^NFe/, '');
+  if (protocolKey !== key || (invoiceKey && invoiceKey !== key)) return null;
   if (String(invoice.ide?.tpNF || '') !== '1') return null;
   if (String(invoice.ide?.tpAmb || '1') !== '1') return null;
   const date = String(invoice.ide?.dhEmi || invoice.ide?.dEmi || '').slice(0, 10);

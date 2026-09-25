@@ -108,8 +108,15 @@ export function parseSefazDocument(xml, companyCnpj) {
     const protocol = document.nfeProc.protNFe?.infProt;
     if (!row || String(row.dest?.CNPJ || '') !== companyCnpj) return null;
     const key = String(protocol?.chNFe || '').replace(/^NFe/, '');
+    const invoiceKey = String(row['@_Id'] || '').replace(/^NFe/, '');
     const amount = Number(row.total?.ICMSTot?.vNF);
-    if (!validKey(key) || !Number.isFinite(amount) || amount < 0) return null;
+    if (
+      !validKey(key) ||
+      (invoiceKey && invoiceKey !== key) ||
+      !Number.isFinite(amount) ||
+      amount < 0
+    )
+      return null;
     const items = xmlItems(row);
     const purpose = String(row.ide?.finNFe || '');
     const operation = String(row.ide?.natOp || '');
