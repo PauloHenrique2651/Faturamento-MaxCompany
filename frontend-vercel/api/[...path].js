@@ -151,7 +151,7 @@ function documentFromCloud(row) {
     date: row.issued_on,
     number: source.number || row.document_number,
     series: source.series || row.series,
-    value: amount(source.value ?? row.amount),
+    value: amount(row.amount),
     customer:
       source.customer ||
       (row.direction === 'outgoing'
