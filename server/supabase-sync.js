@@ -33,8 +33,8 @@ function config() {
     .replace(/\/rest\/v1\/?$/, '')
     .replace(/\/$/, '');
   const secret = String(
-    process.env.SUPABASE_SECRET_KEY ||
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_SECRET_KEY ||
       local.secretKey ||
       ''
   );
