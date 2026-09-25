@@ -29,7 +29,7 @@ function cookie(res, value) {
 
 async function supabase(path, options = {}) {
   const base = env('SUPABASE_URL').replace(/\/$/, '');
-  const key = env('SUPABASE_SECRET_KEY') || env('SUPABASE_SERVICE_ROLE_KEY');
+  const key = env('SUPABASE_SERVICE_ROLE_KEY') || env('SUPABASE_SECRET_KEY');
   if (!base || !key) throw new Error('Supabase não configurado na Vercel.');
   const response = await fetch(`${base}${path}`, {
     ...options,
