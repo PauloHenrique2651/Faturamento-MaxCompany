@@ -182,7 +182,7 @@ async function syncUsers() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Prefer: 'resolution=merge-duplicates,return=minimal'
+      Prefer: 'resolution=ignore-duplicates,return=minimal'
     },
     body: JSON.stringify(rows)
   });
@@ -380,6 +380,32 @@ export async function syncSupabaseFromFalco() {
     const outgoingRows = outgoing.documents.map((row) => normalizeCloudDocument(row, 'outgoing'));
     const incomingRows = incoming.documents.map((row) => normalizeCloudDocument(row, 'incoming'));
     await upsertDocuments([...outgoingRows, ...incomingRows]);
+    for (const [direction, summary] of [
+      ['outgoing', outgoing],
+      ['incoming', incoming]
+    ]) {
+      for (const [companyName, companyId] of companies) {
+        const keys = [
+          ...new Set(
+            (summary.canceledDocuments || [])
+              .filter((row) => row.company === companyName)
+              .map((row) => row.key)
+          )
+        ];
+        for (let index = 0; index < keys.length; index += 100) {
+          const filters = new URLSearchParams({
+            company_id: `eq.${companyId}`,
+            direction: `eq.${direction}`,
+            access_key: `in.(${keys.slice(index, index + 100).join(',')})`
+          });
+          await request(`/rest/v1/fiscal_documents?${filters}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+            body: JSON.stringify({ is_canceled: true, synced_at: new Date().toISOString() })
+          });
+        }
+      }
+    }
     let artifactCount = 0;
     let artifactAttempts = 0;
     let artifactErrors = 0;
@@ -391,28 +417,34 @@ export async function syncSupabaseFromFalco() {
         state,
         settings.artifactBatchSize
       );
-      for (const { row, direction } of batch) {
-        artifactAttempts++;
-        const paths = artifactPaths(row, direction);
-        try {
-          const result = await uploadDocumentArtifacts(row, direction, state);
-          artifactCount += result.uploaded;
-          generatedDanfeCount += result.generatedDanfe;
-        } catch (error) {
-          artifactErrors++;
-          recordFailure(state, paths.id, error);
-          try {
-            await patchArtifactStatus(row, direction, {
-              sync_status: 'ERROR',
-              sync_attempts: state.artifactFailures[paths.id].attempts,
-              last_sync_error: state.artifactFailures[paths.id].error,
-              last_sync_at: new Date().toISOString()
-            });
-          } catch {
-            // A falha do registro não interrompe o restante do backfill.
+      const pending = [...batch];
+      await Promise.all(
+        Array.from({ length: Math.min(4, batch.length) }, async () => {
+          while (pending.length) {
+            const { row, direction } = pending.shift();
+            artifactAttempts++;
+            const paths = artifactPaths(row, direction);
+            try {
+              const result = await uploadDocumentArtifacts(row, direction, state);
+              artifactCount += result.uploaded;
+              generatedDanfeCount += result.generatedDanfe;
+            } catch (error) {
+              artifactErrors++;
+              recordFailure(state, paths.id, error);
+              try {
+                await patchArtifactStatus(row, direction, {
+                  sync_status: 'ERROR',
+                  sync_attempts: state.artifactFailures[paths.id].attempts,
+                  last_sync_error: state.artifactFailures[paths.id].error,
+                  last_sync_at: new Date().toISOString()
+                });
+              } catch {
+                // A falha do registro não interrompe o restante do backfill.
+              }
+            }
           }
-        }
-      }
+        })
+      );
       const remaining = selectArtifactBatch(
         outgoing.documents,
         incoming.documents,

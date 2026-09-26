@@ -1,6 +1,6 @@
 # Publicação do frontend
 
-O projeto Vercel deve usar `frontend-vercel` como **Root Directory**. Ela é a cópia estática gerada a partir de `public` por `npm run sync:frontend`. As pastas `server`, `data`, arquivos `.env`, credenciais e XMLs não são publicadas.
+O domínio atual usa as funções de `api/` na raiz e os arquivos estáticos de `public/`. `frontend-vercel/` permanece como raiz alternativa, sincronizada a partir de `public/` por `npm run sync:frontend`. As rotas explícitas são mantidas nas duas raízes. `data/`, arquivos `.env`, credenciais e XMLs não são arquivos públicos.
 
 1. O servidor MaxCompany lê as pastas do Falco e sincroniza os documentos para o Supabase usando apenas a chave secreta local.
 2. Os SQLs em `supabase/001_fiscal_documents.sql`, `002_cloud_api.sql` e `003_fiscal_document_sync_status.sql` criam e evoluem de forma aditiva o banco privado e o bucket `fiscal-documents`.

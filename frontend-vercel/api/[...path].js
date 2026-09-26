@@ -1,5 +1,7 @@
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { fiscalBreakdown, scopedDocuments, searchDocuments } from '../lib/cloud-fiscal.js';
+import { classifyFiscalOperation } from '../lib/fiscal-operation.js';
 
 const scrypt = promisify(scryptCallback);
 const companies = [
@@ -8,7 +10,7 @@ const companies = [
   [3, 'MaxSupply'],
   [4, 'MaxSupply · Filial ES']
 ];
-const taxNames = ['icms', 'ipi', 'pis', 'cofins', 'issqn', 'fcp', 'difal'];
+const taxNames = ['ICMS', 'ICMS-ST', 'FCP', 'FCP-ST', 'DIFAL', 'IPI', 'PIS', 'COFINS', 'ISS', 'II'];
 const secure = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
 
 function env(name) {
@@ -191,9 +193,17 @@ function money(value) {
 function documentFromCloud(row) {
   const source =
     row.source_payload && typeof row.source_payload === 'object' ? row.source_payload : {};
+  const items = Array.isArray(source.itemsDetail)
+    ? source.itemsDetail
+    : Array.isArray(row.items)
+      ? row.items
+      : [];
   return {
     ...source,
     key: row.access_key,
+    companyId: row.company_id,
+    direction: row.direction,
+    syncedAt: row.synced_at || null,
     company: source.company || companies.find(([id]) => id === row.company_id)?.[1],
     date: row.issued_on,
     number: source.number || row.document_number,
@@ -212,8 +222,14 @@ function documentFromCloud(row) {
     seller: source.seller || row.seller || null,
     operation: source.operation || row.operation_name || null,
     purpose: source.purpose || row.purpose || null,
-    fiscalOperation: source.fiscalOperation || row.fiscal_operation || null,
-    itemsDetail: source.itemsDetail || row.items || [],
+    fiscalOperation: row.is_full_xml
+      ? classifyFiscalOperation({
+          purpose: source.purpose || row.purpose,
+          operation: source.operation || row.operation_name,
+          items
+        })
+      : source.fiscalOperation || row.fiscal_operation || null,
+    itemsDetail: items,
     taxes: source.taxes || row.taxes || {},
     freight: source.freight || row.freight || { value: 0 },
     referencedKeys: source.referencedKeys || row.referenced_keys || [],
@@ -235,6 +251,15 @@ function documentFromCloud(row) {
   };
 }
 
+async function allCloudRows(path) {
+  const rows = [];
+  for (let offset = 0; ; offset += 500) {
+    const page = await supabase(`${path}&limit=500&offset=${offset}`);
+    rows.push(...page);
+    if (page.length < 500) return rows;
+  }
+}
+
 async function cloudDocuments(direction, url) {
   const { inicio, fim } = dateParams(url);
   const filters = [
@@ -246,13 +271,18 @@ async function cloudDocuments(direction, url) {
   ];
   const company = Number(url.searchParams.get('empresa'));
   if ([1, 2, 3, 4].includes(company)) filters.push(`company_id=eq.${company}`);
-  const rows = await supabase(
-    `/rest/v1/fiscal_documents?select=*&${filters.join('&')}&order=issued_on.desc&limit=10000`
+  const rows = await allCloudRows(
+    `/rest/v1/fiscal_documents?select=*&${filters.join('&')}&order=issued_on.desc,company_id,access_key`
   );
-  return { rows: rows.map(documentFromCloud), inicio, fim };
+  const documents = rows.map(documentFromCloud);
+  return {
+    rows: direction === 'outgoing' ? scopedDocuments(documents, url.searchParams) : documents,
+    inicio,
+    fim
+  };
 }
 
-function baseSummary(rows, inicio, fim, direction) {
+function baseSummary(rows, inicio, fim, direction, scope = {}) {
   const daily = new Map();
   const companiesMap = new Map();
   const parties = new Map();
@@ -299,7 +329,9 @@ function baseSummary(rows, inicio, fim, direction) {
     op.count++;
     op.value += value;
     operations.set(type, op);
-    items += Number(row.items || row.itemsDetail?.length || 0);
+    items += Array.isArray(row.items)
+      ? row.items.length
+      : Number(row.items || row.itemsDetail?.length || 0);
     freight += Number(row.freight?.value || 0);
     credit += Number(row.simpleIcmsCredit || 0);
     for (const name of taxNames) taxes[name] += Number(row.taxes?.[name] || 0);
@@ -334,8 +366,15 @@ function baseSummary(rows, inicio, fim, direction) {
     companies: ranked(companiesMap),
     documents: documents.map((row) => ({ ...row, value: money(row.value) })),
     filesInspected: rows.length,
-    sourcesAvailable: 1,
-    sourcesTotal: 1,
+    source: 'Supabase',
+    lastSyncedAt:
+      documents
+        .map((row) => row.syncedAt)
+        .filter(Boolean)
+        .sort()
+        .at(-1) || null,
+    sourcesAvailable: new Set(documents.map((row) => row.company)).size,
+    sourcesTotal: companies.length,
     documentCoverage: {
       xmlAvailable: documents.filter((row) => row.xmlStatus === 'AVAILABLE' || row.hasXml).length,
       xmlMissing: documents.filter((row) => row.xmlStatus !== 'AVAILABLE' && !row.hasXml).length,
@@ -350,20 +389,7 @@ function baseSummary(rows, inicio, fim, direction) {
       .sort((a, b) => b.value - a.value)
   };
   if (direction === 'outgoing') {
-    result.customers = ranked(parties);
-    result.customerGroups = result.customers.map((row) => ({
-      ...row,
-      cnpjCount: 1,
-      registrationCount: 1
-    }));
-    result.sellers = ranked(sellers);
-    result.products = [];
-    result.cfops = [];
-    result.returns = {
-      value: money(operations.get('return')?.value || 0),
-      count: operations.get('return')?.count || 0,
-      documents: documents.filter((row) => row.fiscalOperation?.type === 'return')
-    };
+    Object.assign(result, fiscalBreakdown(documents, series, scope));
   } else {
     result.suppliers = ranked(parties);
     const returnDocuments = documents.filter((row) => row.fiscalOperation?.type === 'return');
@@ -390,6 +416,93 @@ function documentDetailFromCloud(row) {
     amount: document.value,
     items: Array.isArray(document.itemsDetail) ? document.itemsDetail : []
   };
+}
+
+async function handleUsers(req, res, user, path) {
+  if (user.role !== 'admin') return json(res, 403, { error: 'Acesso restrito ao administrador.' });
+  const id = path.split('/')[3];
+  if (id && !/^[a-f0-9]{24}$/.test(id)) return json(res, 400, { error: 'Usuário inválido.' });
+  if (!id && req.method === 'GET') {
+    const users = await supabase(
+      '/rest/v1/crm_users?disabled=eq.false&select=id,name,role&order=name'
+    );
+    return json(res, 200, users);
+  }
+  if (
+    !['POST', 'PATCH', 'DELETE'].includes(req.method) ||
+    (req.method === 'POST' ? Boolean(id) : !id)
+  )
+    return json(res, 405, { error: 'Método inválido.' });
+  const body = req.method === 'DELETE' ? {} : await requestBody(req);
+  if (body.role !== undefined && !['admin', 'fiscal'].includes(body.role))
+    return json(res, 400, { error: 'Perfil inválido.' });
+  if (
+    (req.method === 'POST' || body.password !== undefined) &&
+    (typeof body.password !== 'string' || body.password.length < 4 || body.password.length > 128)
+  )
+    return json(res, 400, { error: 'A senha deve ter de 4 a 128 caracteres.' });
+  const headers = { 'Content-Type': 'application/json', Prefer: 'return=representation' };
+  if (req.method === 'POST') {
+    if (
+      typeof body.name !== 'string' ||
+      body.name.trim().length < 3 ||
+      body.name.length > 100 ||
+      !body.role
+    )
+      return json(res, 400, { error: 'Informe nome e perfil válidos.' });
+    const duplicate = await supabase(
+      '/rest/v1/crm_users?name_normalized=eq.' +
+        encodeURIComponent(normalize(body.name)) +
+        '&select=id'
+    );
+    if (duplicate.length) return json(res, 409, { error: 'Usuário já cadastrado.' });
+    const salt = randomBytes(16).toString('hex');
+    const hash = (await scrypt(body.password, salt, 64)).toString('hex');
+    const created = await supabase('/rest/v1/crm_users', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        id: randomBytes(12).toString('hex'),
+        name: body.name.trim(),
+        name_normalized: normalize(body.name),
+        role: body.role,
+        salt,
+        hash,
+        version: 1,
+        disabled: false
+      })
+    });
+    return json(res, 201, publicUser(created[0]));
+  }
+  const found = await supabase(
+    '/rest/v1/crm_users?id=eq.' + id + '&disabled=eq.false&select=id,name,role,version'
+  );
+  const target = found[0];
+  if (!target) return json(res, 404, { error: 'Usuário não encontrado.' });
+  if (user.id === id && (req.method === 'DELETE' || (body.role && body.role !== 'admin')))
+    return json(res, 400, { error: 'Não é permitido remover seu próprio acesso administrativo.' });
+  if (
+    target.role === 'admin' &&
+    (req.method === 'DELETE' || (body.role && body.role !== 'admin'))
+  ) {
+    const admins = await supabase('/rest/v1/crm_users?role=eq.admin&disabled=eq.false&select=id');
+    if (admins.length <= 1)
+      return json(res, 400, { error: 'É necessário manter ao menos um administrador.' });
+  }
+  const changes = { version: target.version + 1 };
+  if (req.method === 'DELETE') changes.disabled = true;
+  if (body.role) changes.role = body.role;
+  if (body.password !== undefined) {
+    changes.salt = randomBytes(16).toString('hex');
+    changes.hash = (await scrypt(body.password, changes.salt, 64)).toString('hex');
+  }
+  const updated = await supabase(
+    '/rest/v1/crm_users?id=eq.' + id + '&version=eq.' + target.version,
+    { method: 'PATCH', headers, body: JSON.stringify(changes) }
+  );
+  if (!updated.length)
+    return json(res, 409, { error: 'Usuário alterado em outra sessão. Atualize a página.' });
+  return json(res, 200, req.method === 'DELETE' ? { ok: true } : publicUser(updated[0]));
 }
 
 export { baseSummary, documentFromCloud, documentDetailFromCloud, storageCandidates };
@@ -423,9 +536,35 @@ async function handle(req, res) {
   if (path === '/api/health') return json(res, 200, { ok: true, source: 'Supabase' });
   const user = await currentUser(req);
   if (!user) return json(res, 401, { error: 'Sessão expirada. Entre novamente.' });
+  if (path === '/api/users' || path.startsWith('/api/users/'))
+    return handleUsers(req, res, user, path);
+  if (
+    user.role === 'fiscal' &&
+    !['/api/falco/nfe', '/api/falco/entradas', '/api/falco/documento', '/api/falco/busca'].includes(
+      path
+    )
+  )
+    return json(res, 403, { error: 'Acesso restrito ao fiscal.' });
+  if (path === '/api/falco/busca') {
+    const query = String(url.searchParams.get('q') || '').trim();
+    if (query.length > 120 || (query.length > 0 && query.length < 3 && !/^\d+$/.test(query)))
+      return json(res, 400, { error: 'Digite ao menos 3 letras ou um número de nota.' });
+    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+    if (!query) return json(res, 200, searchDocuments([], query, offset));
+    const rows = await allCloudRows(
+      '/rest/v1/fiscal_documents?select=*&order=issued_on.desc,company_id,access_key'
+    );
+    return json(res, 200, searchDocuments(rows.map(documentFromCloud), query, offset));
+  }
   if (path === '/api/falco/nfe' || path === '/api/executive') {
     const cloud = await cloudDocuments('outgoing', url);
-    return json(res, 200, baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'outgoing'));
+    const scope = {
+      customerId: url.searchParams.get('clienteNfe'),
+      customerGroupId: url.searchParams.get('grupoClienteNfe'),
+      sellerName: url.searchParams.get('vendedorNfe'),
+      productCode: url.searchParams.get('produtoNfe')
+    };
+    return json(res, 200, baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'outgoing', scope));
   }
   if (path === '/api/falco/entradas') {
     const cloud = await cloudDocuments('incoming', url);

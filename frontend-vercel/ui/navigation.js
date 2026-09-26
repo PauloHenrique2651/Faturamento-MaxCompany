@@ -11,7 +11,7 @@ export const viewLabels = {
   vendedores: 'Vendas por vendedor',
   clientes: 'Clientes nas NF-e',
   produtos: 'Produtos nas NF-e',
-  fiscal: 'UF e CFOP',
+  fiscal: 'CFOPs e classificação',
   usuarios: 'Usuários'
 };
 

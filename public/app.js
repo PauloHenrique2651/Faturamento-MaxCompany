@@ -20,6 +20,7 @@ import { icon } from './ui/icons.js';
 import { navigationSections as sections, viewLabels as views } from './ui/navigation.js';
 import { legacyViews, readSnapshot, saveSnapshot, state } from './state.js';
 import { reports, reportGroups } from './report-catalog.js';
+import { cfopCatalog, cfopDescription } from './lib/cfop-catalog.js';
 function href(view, changes = {}) {
   const p = new URLSearchParams(state.params);
   if (view !== 'busca') {
@@ -559,6 +560,12 @@ function showXmlCompanies() {
   renderCompanies(xmlCompanies);
 }
 function nfeSource(data, detailed = false) {
+  if (data.source === 'Supabase') {
+    const synced = data.lastSyncedAt
+      ? new Date(data.lastSyncedAt).toLocaleString('pt-BR')
+      : 'a confirmar';
+    return `<div class="nfe-source"><span class="nfe-live">Fonte: NF-e sincronizadas · consulta na nuvem</span><span>Último envio: ${esc(synced)}</span></div>`;
+  }
   const live = data.sourcesAvailable === data.sourcesTotal;
   const label = live
     ? 'Fonte: XMLs de NF-e · pastas conectadas'
@@ -580,7 +587,9 @@ function documentRows(rows, type, limit = state.documentLimit) {
         row.xmlStatus || row.danfeStatus
           ? `<small class="document-availability"><span class="${row.xmlStatus === 'AVAILABLE' || row.hasXml ? 'available' : 'missing'}">XML ${row.xmlStatus === 'AVAILABLE' || row.hasXml ? 'disponível' : 'pendente'}</span><span class="${row.danfeStatus === 'AVAILABLE' || row.hasDanfe ? 'available' : 'missing'}">DANFE ${row.danfeStatus === 'AVAILABLE' || row.hasDanfe ? 'disponível' : 'pendente'}</span></small>`
           : '';
-      return `<button class="document-row" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)} · ${esc(operationLabel(row.fiscalOperation?.type))}${availability}</span><strong>${money(row.value)}</strong></button>`;
+      const cfops = [...new Set((row.itemsDetail || []).map((item) => item.cfop).filter(Boolean))];
+      const fiscalTags = `<small class="document-cfops">${cfops.map((code) => `<span class="cfop-badge" title="${esc(cfopDescription(code))}">CFOP ${esc(code)}</span>`).join(' ')}</small>`;
+      return `<button class="document-row" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)} · ${esc(type === 'entrada' && row.fiscalOperation?.type === 'sale' ? 'Compra / entrada de fornecedor' : operationLabel(row.fiscalOperation?.type))}${fiscalTags}${availability}</span><strong>${money(row.value)}</strong></button>`;
     })
     .join(
       ''
@@ -1095,16 +1104,43 @@ function nfeBreakdown() {
 }
 function nfeFiscal() {
   const data = state.nfeData;
+  const used = new Set(data.cfops.map((row) => row.name));
+  const catalog = cfopCatalog.map((row) => ({
+    ...row,
+    used: row.codes.some((code) => used.has(code))
+  }));
   $('#page').innerHTML =
     head(
-      'UF e CFOP',
+      'CFOPs e classificação',
       'Distribuição das NF-e emitidas por destino e dos itens por código fiscal.',
       'MaxCompany / Fiscal'
     ) +
     nfeSource(data) +
     `<section class="kpis">${kpi('Valor das notas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Notas emitidas', num(data.invoiceCount), 'Autorizadas e não canceladas', 'document')}${kpi('UF de destino', num(data.ufs.length), 'Identificadas no XML', 'target')}${kpi('CFOP distintos', num(data.cfops.length), 'Nos itens das notas', 'box')}</section>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Por UF de destino', 'Valor total das NF-e por UF', data.ufs, false, 28)}${nfeRanking('Por CFOP', 'Valor bruto dos itens por CFOP', data.cfops, true, 30)}</div>` +
-    `<p class="nfe-note">UF usa o valor total da nota. CFOP usa o valor bruto dos itens e pode aparecer mais de uma vez na mesma nota. Esta é uma análise relacionada aos relatórios fiscais, sem reproduzir sua apuração oficial.</p>`;
+    `<article class="panel cfop-reference">${panelHead('CFOPs configurados no Falco', 'Referência fornecida pela empresa · os códigos presentes neste período ficam destacados')}${table(
+      [
+        {
+          title: 'CFOPs',
+          render: (row) =>
+            row.codes
+              .map(
+                (code) =>
+                  `<span class="cfop-badge ${used.has(code) ? 'in-period' : ''}">${esc(code)}</span>`
+              )
+              .join(' ')
+        },
+        { title: 'Operação', render: (row) => esc(row.name) },
+        { title: 'Classificação', render: (row) => `<strong>${esc(row.classification)}</strong>` },
+        {
+          title: 'Vendas faturadas',
+          render: (row) =>
+            `<span class="cfop-revenue ${row.revenue ? 'included' : 'excluded'}">${row.revenue ? 'Inclui se autorizada' : 'Fora das vendas'}</span>`
+        }
+      ],
+      catalog.sort((a, b) => Number(b.used) - Number(a.used))
+    )}</article>` +
+    `<p class="nfe-note">UF usa o valor total da nota. CFOP usa o valor bruto dos itens. O tipo “Venda” do cadastro Falco também abrange remessas, brindes e retornos: ele não comprova venda. Finalidade, autorização, cancelamento e CFOPs da nota determinam o indicador. Notas mistas ficam separadas; devolução recebida só reduz vendas após vínculo confirmado. Simples faturamento exige conciliação com a entrega para evitar dupla contagem.</p>`;
 }
 function incomingDashboard() {
   const data = state.incomingData;
@@ -1544,7 +1580,7 @@ async function openInvoice(key, type, companyId, canceled = false) {
   const url = (format, download = false) =>
     `/api/falco/documento?tipo=${type}&empresa=${company}&chave=${key}&formato=${format}${download ? '&baixar=1' : ''}`;
   const party = type === 'saida' ? document.customer : document.supplier;
-  const rows = document.items || [];
+  const rows = Array.isArray(document.items) ? document.items : document.itemsDetail || [];
   const taxes = Object.entries(document.taxes || {}).filter(([, value]) => value > 0);
   $('#detail-title').textContent =
     `NF-e ${document.number || key.slice(25, 34)}/${document.series || key.slice(22, 25)}`;
@@ -1557,6 +1593,7 @@ async function openInvoice(key, type, companyId, canceled = false) {
     (document.fiscalOperation
       ? `<p class="notice"><strong>Operação:</strong> ${esc(operationLabel(document.fiscalOperation.type))} · ${esc(document.fiscalOperation.evidence)} · ${esc(document.operation || 'Natureza não informada')}${document.referencedKeys?.length ? `<br>NF-e referenciada: ${document.referencedKeys.map((ref) => `<a href="${esc(searchUrl(ref))}">${esc(ref)}</a>`).join(', ')}` : ''}</p>`
       : '') +
+    `<div class="invoice-cfops">${[...new Set(rows.map((item) => item.cfop).filter(Boolean))].map((code) => `<span class="cfop-badge in-period">CFOP ${esc(code)} · ${esc(cfopDescription(code))}</span>`).join(' ')}</div>` +
     `<div class="document-status"><span class="${document.hasXml ? 'available' : 'missing'}">XML: ${document.hasXml ? 'Disponível' : 'Indisponível'}</span><span class="${document.hasDanfe || document.hasPdf ? 'available' : 'missing'}">DANFE: ${document.hasDanfe || document.hasPdf ? 'Disponível' : 'Indisponível'}</span><span>Status: ${esc(document.documentStatus || (canceled ? 'CANCELED' : 'AUTHORIZED'))}</span></div>` +
     `<div class="invoice-actions">${document.hasXml ? `<a class="button primary" href="${url('xml')}" target="_blank" rel="noopener">Ver XML</a><a class="button" href="${url('xml', true)}">Baixar XML</a>` : ''}${document.hasPdf ? `<a class="button" href="${url('pdf')}" target="_blank" rel="noopener">Ver DANFE</a><a class="button" href="${url('pdf', true)}">Baixar DANFE</a>` : document.hasDanfe ? `<a class="button" href="${url('danfe')}" target="_blank" rel="noopener">Ver / imprimir DANFE</a><a class="button" href="${url('danfe', true)}">Baixar DANFE</a>` : ''}</div>` +
     (type === 'entrada' && !document.full
@@ -1572,7 +1609,7 @@ async function openInvoice(key, type, companyId, canceled = false) {
             },
             { title: 'Quantidade', num: true, render: (r) => `${num(r.quantity)} ${esc(r.unit)}` },
             { title: 'Valor', num: true, render: (r) => money(r.value) },
-            { title: 'ICMS', num: true, render: (r) => money(r.taxes.ICMS) }
+            { title: 'ICMS', num: true, render: (r) => money(r.taxes?.ICMS) }
           ],
           rows
         )}`

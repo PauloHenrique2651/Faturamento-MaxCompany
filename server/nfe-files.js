@@ -636,6 +636,9 @@ export async function readNfeSummary(inicio, fim, companyId = null, scope = {}) 
         .sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number))
     },
     canceledCount: canceledInPeriod.size,
+    canceledDocuments: parsed
+      .filter((row) => row.kind === 'invoice' && canceledInPeriod.has(row.key))
+      .map((row) => ({ key: row.key, company: row.company })),
     itemCount,
     customerCount: historicGroupCustomers.size || byCustomer.size,
     customerGroupCount: byCustomerGroup.size,
@@ -667,6 +670,10 @@ export async function readNfeSummary(inicio, fim, companyId = null, scope = {}) 
         items: row.items.length,
         itemsDetail: row.items,
         taxes: row.taxes,
+        customerGroup: customerGroup(row.customer),
+        uf: row.uf,
+        discount: row.discount,
+        taxRegime: row.taxRegime,
         simpleIcmsCredit: row.simpleIcmsCredit,
         freight: row.freight,
         fiscalOperation: row.fiscalOperation,

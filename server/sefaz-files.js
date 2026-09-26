@@ -441,6 +441,9 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
       documents: documents.filter((row) => row.fiscalOperation?.type === 'return')
     },
     canceledCount,
+    canceledDocuments: [...invoices.entries()]
+      .filter(([id, row]) => row.canceled || canceled.has(id))
+      .map(([, row]) => ({ key: row.key, company: row.company })),
     fullXmlCount,
     summaryOnlyCount: count - fullXmlCount,
     itemCount,

@@ -14,6 +14,7 @@ export async function fetchJson(path) {
   }
 
   if (!response.ok) {
+    if (response.status === 401) throw new Error('Faça login para continuar');
     throw new Error(data.error || 'Falha na consulta');
   }
 
