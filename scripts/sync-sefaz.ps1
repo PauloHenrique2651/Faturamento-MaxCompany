@@ -21,10 +21,18 @@ $mutex = [Threading.Mutex]::new($false, 'Local\MaxCompanyCrmSefazDistribution')
 if (-not $mutex.WaitOne(0)) { Write-Output 'Consulta SEFAZ já em execução'; exit 0 }
 try {
 
+# Em execuções sem o provedor de certificados (por exemplo, coletor em segundo plano),
+# trata a ausência como indisponibilidade operacional em vez de abortar todo o ciclo.
+$certificates = if (Get-PSDrive -Name Cert -ErrorAction SilentlyContinue) {
+    @(Get-ChildItem -Path Cert:\CurrentUser\My -ErrorAction SilentlyContinue)
+} else {
+    @()
+}
+
 function Save-State([string]$path, [hashtable]$state) {
     $temporary = "$path.tmp"
     [System.IO.File]::WriteAllText($temporary, ($state | ConvertTo-Json -Depth 4), [System.Text.Encoding]::UTF8)
-    [System.IO.File]::Move($temporary, $path, $true)
+    Move-Item -LiteralPath $temporary -Destination $path -Force
 }
 
 function Node-Text($node, [string]$name) {
@@ -35,7 +43,7 @@ function Node-Text($node, [string]$name) {
 
 foreach ($companyConfig in $companies) {
     if ($Company -ne 'all' -and $Company -ne $companyConfig.Id) { continue }
-    $certificate = Get-ChildItem Cert:\CurrentUser\My |
+    $certificate = $certificates |
         Where-Object {
             $_.HasPrivateKey -and $_.NotBefore -le (Get-Date) -and $_.NotAfter -gt (Get-Date) -and
             $_.Subject -match ':(\d{14})' -and $Matches[1].EndsWith($companyConfig.Tail)
@@ -44,7 +52,13 @@ foreach ($companyConfig in $companies) {
         $existingFolder = Get-ChildItem -LiteralPath $storage -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{14}$' -and $_.Name.EndsWith($companyConfig.Tail) } | Select-Object -First 1
         if ($existingFolder) {
             $existingStatePath = Join-Path $existingFolder.FullName 'state.json'
-            $missingState = if (Test-Path -LiteralPath $existingStatePath) { Get-Content -LiteralPath $existingStatePath -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
+            $missingState = @{}
+            if (Test-Path -LiteralPath $existingStatePath) {
+                $savedMissingState = Get-Content -LiteralPath $existingStatePath -Raw | ConvertFrom-Json
+                foreach ($property in $savedMissingState.PSObject.Properties) {
+                    $missingState[$property.Name] = $property.Value
+                }
+            }
             $missingState.LastError = 'Certificado empresarial válido não encontrado nesta conta Windows.'
             $missingState.LastAttemptAt = [DateTimeOffset]::UtcNow.ToString('o')
             Save-State $existingStatePath $missingState
