@@ -42,7 +42,8 @@ for (const relativePath of [
   'server/supabase-sync.js',
   'server/queries.js',
   'server/server.js',
-  'supabase/001_fiscal_documents.sql'
+  'supabase/001_fiscal_documents.sql',
+  'frontend-vercel/api/falco/documento.js'
 ]) {
   await requireFile(relativePath);
 }

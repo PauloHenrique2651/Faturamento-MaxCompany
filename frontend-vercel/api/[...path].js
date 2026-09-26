@@ -383,7 +383,16 @@ function baseSummary(rows, inicio, fim, direction) {
   return result;
 }
 
-export { baseSummary, documentFromCloud, storageCandidates };
+function documentDetailFromCloud(row) {
+  const document = documentFromCloud(row);
+  return {
+    ...document,
+    amount: document.value,
+    items: Array.isArray(document.itemsDetail) ? document.itemsDetail : []
+  };
+}
+
+export { baseSummary, documentFromCloud, documentDetailFromCloud, storageCandidates };
 
 async function handle(req, res) {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
@@ -465,7 +474,7 @@ async function handle(req, res) {
       res.end(content);
       return;
     }
-    const document = documentFromCloud(row);
+    const document = documentDetailFromCloud(row);
     const [xml, pdf, danfe] = await Promise.all([
       firstStoredObject(row, 'xml'),
       firstStoredObject(row, 'pdf'),

@@ -1,6 +1,30 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { baseSummary, storageCandidates } from '../frontend-vercel/api/[...path].js';
+import handler, {
+  baseSummary,
+  documentDetailFromCloud,
+  storageCandidates
+} from '../frontend-vercel/api/[...path].js';
+import documentRoute from '../frontend-vercel/api/falco/documento.js';
+
+test('Vercel publica uma rota explícita para o detalhe e arquivos da NF-e', () => {
+  assert.equal(documentRoute, handler);
+});
+
+test('detalhe cloud fornece valor e itens no contrato usado pelo modal', () => {
+  const items = [{ code: '1', name: 'Produto', value: 100, taxes: { ICMS: 18 } }];
+  const detail = documentDetailFromCloud({
+    company_id: 1,
+    direction: 'outgoing',
+    amount: 100,
+    is_full_xml: true,
+    source_payload: { items: 1, itemsDetail: items }
+  });
+  assert.equal(detail.amount, 100);
+  assert.deepEqual(detail.items, items);
+  assert.equal(detail.full, true);
+  assert.deepEqual(documentDetailFromCloud({ amount: 0 }).items, []);
+});
 
 const row = (overrides = {}) => ({
   key: '35260912345678000123550010000000011000000010',
