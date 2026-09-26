@@ -94,21 +94,36 @@ async function saveState(state) {
 
 async function request(path, { method = 'GET', body, headers = {} } = {}) {
   const { url, secret } = config();
-  const response = await fetch(`${url}${path}`, {
-    method,
-    headers: {
-      apikey: secret,
-      Authorization: `Bearer ${secret}`,
-      ...headers
-    },
-    body
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Supabase ${response.status}: ${detail.slice(0, 300)}`);
+  const timeoutMs = Math.max(
+    5_000,
+    Math.min(60_000, Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || 20_000))
+  );
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${url}${path}`, {
+      method,
+      signal: controller.signal,
+      headers: {
+        apikey: secret,
+        Authorization: `Bearer ${secret}`,
+        ...headers
+      },
+      body
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Supabase ${response.status}: ${detail.slice(0, 300)}`);
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  } catch (error) {
+    if (error.name === 'AbortError')
+      throw new Error(`Supabase excedeu ${Math.round(timeoutMs / 1000)} segundos.`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
 }
 
 export function normalizeCloudDocument(row, direction) {
