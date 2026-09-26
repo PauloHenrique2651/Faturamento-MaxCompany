@@ -16,6 +16,11 @@ $companies = @(
     @{ Id = '4'; Name = 'MaxSupply · Filial ES'; Tail = '0226'; Uf = '32' }
 )
 
+# Impede duas instâncias locais de consultarem o mesmo cursor simultaneamente.
+$mutex = [Threading.Mutex]::new($false, 'Local\MaxCompanyCrmSefazDistribution')
+if (-not $mutex.WaitOne(0)) { Write-Output 'Consulta SEFAZ já em execução'; exit 0 }
+try {
+
 function Save-State([string]$path, [hashtable]$state) {
     $temporary = "$path.tmp"
     [System.IO.File]::WriteAllText($temporary, ($state | ConvertTo-Json -Depth 4), [System.Text.Encoding]::UTF8)
@@ -36,6 +41,14 @@ foreach ($companyConfig in $companies) {
             $_.Subject -match ':(\d{14})' -and $Matches[1].EndsWith($companyConfig.Tail)
         } | Select-Object -First 1
     if (-not $certificate) {
+        $existingFolder = Get-ChildItem -LiteralPath $storage -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{14}$' -and $_.Name.EndsWith($companyConfig.Tail) } | Select-Object -First 1
+        if ($existingFolder) {
+            $existingStatePath = Join-Path $existingFolder.FullName 'state.json'
+            $missingState = if (Test-Path -LiteralPath $existingStatePath) { Get-Content -LiteralPath $existingStatePath -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
+            $missingState.LastError = 'Certificado empresarial válido não encontrado nesta conta Windows.'
+            $missingState.LastAttemptAt = [DateTimeOffset]::UtcNow.ToString('o')
+            Save-State $existingStatePath $missingState
+        }
         Write-Output "$($companyConfig.Name): certificado válido não encontrado no repositório do Windows"
         continue
     }
@@ -124,6 +137,7 @@ foreach ($companyConfig in $companies) {
                 $state.LastNsu = $returnedNsu
             }
             $state.LastStatus = $status
+            $state.LastError = $null
             $state.UpdatedAt = [DateTimeOffset]::UtcNow.ToString('o')
             $state.MaxNsu = $maxNsu
             if ($status -in @('137', '656') -or ($status -eq '138' -and $returnedNsu -eq $maxNsu)) {
@@ -136,9 +150,17 @@ foreach ($companyConfig in $companies) {
             if ($status -ne '138' -or $returnedNsu -eq $maxNsu) { break }
         }
     } catch {
+        $state.LastError = $_.Exception.Message
+        $state.LastAttemptAt = [DateTimeOffset]::UtcNow.ToString('o')
+        $state.NextAllowedAt = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString('o')
+        Save-State $statePath $state
         Write-Output "$($companyConfig.Name): falha na consulta ($($_.Exception.Message))"
     } finally {
         $client.Dispose()
         $handler.Dispose()
     }
+}
+} finally {
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
 }

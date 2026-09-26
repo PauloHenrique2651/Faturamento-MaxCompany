@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -153,6 +154,39 @@ async function upsertDocuments(rows) {
       body: JSON.stringify(rows.slice(index, index + chunkSize))
     });
   }
+}
+
+export function changedDocuments(rows, previous = {}) {
+  const fingerprints = { ...previous };
+  const changed = rows.filter((row) => {
+    const { synced_at, source_updated_at, ...stable } = row;
+    const key = `${row.company_id}/${row.direction}/${row.access_key}`;
+    const digest = createHash('sha256').update(JSON.stringify(stable)).digest('hex');
+    const changed = fingerprints[key] !== digest;
+    fingerprints[key] = digest;
+    return changed;
+  });
+  return { changed, fingerprints };
+}
+
+export function mergeArtifactQueue(outgoing, incoming, state) {
+  const queue = new Map(
+    (state.artifactQueue || []).map((row) => [artifactPaths(row, row.direction).id, row])
+  );
+  for (const [direction, rows] of [
+    ['outgoing', outgoing],
+    ['incoming', incoming]
+  ]) {
+    for (const row of rows) {
+      if (!eligibleArtifact(row, direction)) continue;
+      const id = artifactPaths(row, direction).id;
+      if (!state.completedDocuments?.[id])
+        queue.set(id, { company: row.company, key: row.key, full: row.full, direction });
+    }
+  }
+  return [...queue.values()].filter(
+    (row) => !state.completedDocuments?.[artifactPaths(row, row.direction).id]
+  );
 }
 
 async function syncUsers() {
@@ -351,9 +385,12 @@ export async function syncSupabaseFromFalco() {
   try {
     const state = await readState();
     const end = todayInBrazil();
-    const backfillPending = settings.artifacts && !state.artifactBackfillComplete;
+    const fullScan =
+      !state.metadataInitialized ||
+      !state.lastFullScanAt ||
+      Date.now() - Date.parse(state.lastFullScanAt) > 6 * 3600_000;
     const start =
-      state.lastSuccessAt && !backfillPending
+      state.lastSuccessAt && !fullScan
         ? [settings.startDate, shiftDays(end, -settings.lookbackDays)].sort().at(-1)
         : settings.startDate;
     await request('/rest/v1/crm_sync_runs?source=eq.falco-local&status=eq.running', {
@@ -379,7 +416,16 @@ export async function syncSupabaseFromFalco() {
     const userCount = await syncUsers();
     const outgoingRows = outgoing.documents.map((row) => normalizeCloudDocument(row, 'outgoing'));
     const incomingRows = incoming.documents.map((row) => normalizeCloudDocument(row, 'incoming'));
-    await upsertDocuments([...outgoingRows, ...incomingRows]);
+    const changes = changedDocuments(
+      [...outgoingRows, ...incomingRows],
+      state.documentFingerprints
+    );
+    await upsertDocuments(changes.changed);
+    state.documentFingerprints = changes.fingerprints;
+    state.artifactQueue = mergeArtifactQueue(outgoing.documents, incoming.documents, state);
+    state.metadataInitialized = true;
+    if (fullScan) state.lastFullScanAt = new Date().toISOString();
+    await saveState(state);
     for (const [direction, summary] of [
       ['outgoing', outgoing],
       ['incoming', incoming]
@@ -412,15 +458,16 @@ export async function syncSupabaseFromFalco() {
     let generatedDanfeCount = 0;
     if (settings.artifacts) {
       const batch = selectArtifactBatch(
-        outgoing.documents,
-        incoming.documents,
+        state.artifactQueue.filter((row) => row.direction === 'outgoing'),
+        state.artifactQueue.filter((row) => row.direction === 'incoming'),
         state,
         settings.artifactBatchSize
       );
       const pending = [...batch];
+      const artifactDeadline = Date.now() + 15000;
       await Promise.all(
         Array.from({ length: Math.min(4, batch.length) }, async () => {
-          while (pending.length) {
+          while (pending.length && Date.now() < artifactDeadline) {
             const { row, direction } = pending.shift();
             artifactAttempts++;
             const paths = artifactPaths(row, direction);
@@ -445,14 +492,8 @@ export async function syncSupabaseFromFalco() {
           }
         })
       );
-      const remaining = selectArtifactBatch(
-        outgoing.documents,
-        incoming.documents,
-        state,
-        1,
-        Number.MAX_SAFE_INTEGER
-      );
-      state.artifactBackfillComplete = remaining.length === 0;
+      state.artifactQueue = mergeArtifactQueue([], [], state);
+      state.artifactBackfillComplete = state.artifactQueue.length === 0;
     }
     state.lastSuccessAt = new Date().toISOString();
     state.uploadedArtifacts = Object.fromEntries(
@@ -472,6 +513,8 @@ export async function syncSupabaseFromFalco() {
       artifactAttempts,
       artifactErrors,
       generatedDanfeCount,
+      metadataChanged: changes.changed.length,
+      pendingArtifacts: state.artifactQueue.length,
       artifactBackfillComplete: Boolean(state.artifactBackfillComplete),
       pendingArtifactFailures: Object.keys(state.artifactFailures || {}).length
     };
@@ -490,6 +533,8 @@ export async function syncSupabaseFromFalco() {
       lastSuccessAt: state.lastSuccessAt,
       lastError: null,
       outgoingCount: outgoingRows.length,
+      metadataChanged: changes.changed.length,
+      pendingArtifacts: state.artifactQueue.length,
       incomingCount: incomingRows.length,
       artifactCount,
       artifactAttempts,

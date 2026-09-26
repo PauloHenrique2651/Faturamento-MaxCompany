@@ -561,10 +561,10 @@ function showXmlCompanies() {
 }
 function nfeSource(data, detailed = false) {
   if (data.source === 'Supabase') {
-    const synced = data.lastSyncedAt
-      ? new Date(data.lastSyncedAt).toLocaleString('pt-BR')
-      : 'a confirmar';
-    return `<div class="nfe-source"><span class="nfe-live">Fonte: NF-e sincronizadas · consulta na nuvem</span><span>Último envio: ${esc(synced)}</span></div>`;
+    const last = data.synchronization?.updatedAt || data.lastSyncedAt;
+    const synced = last ? new Date(last).toLocaleString('pt-BR') : 'a confirmar';
+    const fresh = data.synchronization?.fresh === true;
+    return `<div class="nfe-source"><span class="nfe-live ${fresh ? '' : 'is-stale'}">${fresh ? 'Sincronização ativa' : data.synchronization?.collecting ? 'Sincronizando documentos' : 'Sincronização atrasada'} · NF-e por data de emissão</span><span>Última sincronização concluída: ${esc(synced)}</span></div>`;
   }
   const live = data.sourcesAvailable === data.sourcesTotal;
   const label = live
@@ -743,7 +743,7 @@ function revenueDashboard() {
   $('#page').innerHTML =
     head(
       'Faturamento documentado',
-      'NF-e de saída autorizadas, médias e ritmo de fechamento.',
+      'NF-e de venda por data de emissão. O relatório Falco por data do pedido exige conciliação com pedidos, faturados e não faturados.',
       'MaxCompany / Faturamento'
     ) +
     nfeSource(data, true) +
@@ -1167,6 +1167,9 @@ function incomingDashboard() {
       'MaxCompany / Entradas'
     ) +
     `<div class="nfe-source"><span class="nfe-live">Fonte: distribuição DF-e da SEFAZ</span><span>${data.sourcesAvailable} de ${data.sourcesTotal} ${data.sourcesTotal === 1 ? 'empresa' : 'empresas'} · Última consulta ${lastSync ? new Date(lastSync).toLocaleString('pt-BR') : 'ainda não realizada'}</span></div>` +
+    ((data.sync || []).some((row) => row.error)
+      ? '<div class="notice">A consulta automática SEFAZ está indisponível em uma ou mais empresas. O coletor precisa executar na conta Windows com os certificados empresariais válidos. Os dados já sincronizados permanecem disponíveis.</div>'
+      : '') +
     `<section class="kpis">${kpi('Valor das entradas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('NF-e recebidas', num(data.invoiceCount), 'No período selecionado', 'document')}${kpi('XML completo', num(data.fullXmlCount), 'Documentos disponíveis integralmente', 'box')}${kpi('Somente resumo', num(data.summaryOnlyCount), 'Sem itens detalhados', 'target')}</section>` +
     `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Entradas por dia', 'Valor das NF-e destinadas às empresas')}${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor diário das NF-e recebidas">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(max * part)}" y2="${y(max * part)}" stroke="#e4e5e9"/><text x="44" y="${y(max * part) + 4}" text-anchor="end">${short(max * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row.value)}" r="3" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} notas</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem documentos no período.')}</article><article class="panel nfe-companies">${panelHead('Por empresa destinatária', 'Valor das NF-e recebidas')}${data.companies.length ? data.companies.map((row) => `<div class="nfe-company"><div><strong>${esc(row.name)}</strong><span>${num(row.count)} notas · ${money(row.value)}</span></div><div class="nfe-bar"><span style="width:${(row.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma NF-e recebida no período.')}</article></div>` +
     `<div class="nfe-charts nfe-products-row">${nfeRanking('Principais fornecedores emitentes', 'Valor total dos documentos recebidos', data.suppliers, false, 12)}</div>` +
@@ -1211,8 +1214,11 @@ function nfeDashboard() {
     node.replaceWith(anchor);
   });
 }
+let activeLoads = 0;
 async function load(background = false) {
   if (!state.user) return;
+  if (background && activeLoads > 0) return;
+  activeLoads++;
   const seq = ++state.seq;
   $('#refresh').disabled = true;
   $('#page').setAttribute('aria-busy', 'true');
@@ -1317,6 +1323,7 @@ async function load(background = false) {
         ? 'Ao vivo · XMLs das pastas Falco'
         : 'Conexão parcial · últimos XMLs disponíveis';
       $('#refresh-cadence').textContent = 'Tela consulta as pastas a cada 10 s';
+      if (state.nfeData.source === 'Supabase') showCloudFreshness(state.nfeData);
       $('#notice').innerHTML = '';
       return;
     }
@@ -1331,6 +1338,7 @@ async function load(background = false) {
       $('#connection-indicator').setAttribute('aria-label', 'Documentos da SEFAZ consultados');
       $('#data-source-status').textContent = 'SEFAZ · sincronização automática na janela oficial';
       $('#refresh-cadence').textContent = 'Tela consulta o acervo a cada 10 s';
+      if (state.incomingData.source === 'Supabase') showCloudFreshness(state.incomingData);
       $('#notice').innerHTML = '';
       return;
     }
@@ -1388,12 +1396,26 @@ async function load(background = false) {
       $('#page').innerHTML =
         `<section class="source-unavailable"><div class="source-unavailable-icon">${icon('shield')}</div><div><span class="eyebrow">ERP Falco</span><h2>Aguardando a fonte de dados</h2><p>Assim que a conexão de consulta estiver disponível, os indicadores serão carregados automaticamente. Nenhuma alteração será feita no ERP.</p><button class="button primary" data-retry>Tentar reconectar</button></div></section>`;
   } finally {
+    activeLoads--;
     if (seq === state.seq) {
       $('#refresh').disabled = false;
       $('#page').setAttribute('aria-busy', 'false');
       document.body.classList.remove('is-updating');
     }
   }
+}
+function showCloudFreshness(data) {
+  const sync = data.synchronization || {};
+  const text = sync.fresh
+    ? 'Sincronização ativa'
+    : sync.collecting
+      ? 'Sincronização em andamento'
+      : 'Sincronização atrasada';
+  $('#sync-status').textContent = text;
+  $('#connection-indicator').setAttribute('aria-label', text);
+  $('#data-source-status').textContent = text + ' · último conjunto confirmado';
+  $('#refresh-cadence').textContent =
+    'Tela: 10 s · coletor: ciclo alvo de 30 s · SEFAZ: janela oficial';
 }
 function renderUsers(users) {
   $('#page').innerHTML =

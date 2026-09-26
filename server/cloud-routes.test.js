@@ -36,6 +36,10 @@ test('rotas autenticadas entregam detalhe e XML, paginam notas e restringem o pe
     if (url.pathname.startsWith('/storage/'))
       return new Response('<nfeProc/>', { status: url.pathname.endsWith('.xml') ? 200 : 404 });
     if (url.pathname.endsWith('/crm_users')) return Response.json([user]);
+    if (url.pathname.endsWith('/crm_sync_runs'))
+      return Response.json([
+        { status: 'success', finished_at: new Date().toISOString(), details: {} }
+      ]);
     if (url.searchParams.has('access_key')) return Response.json([raw]);
     if (url.searchParams.has('offset')) {
       listPages++;

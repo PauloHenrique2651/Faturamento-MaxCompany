@@ -49,7 +49,11 @@ export async function readIncomingSyncStatus() {
           available: true,
           updatedAt: state.UpdatedAt || null,
           nextAllowedAt: state.NextAllowedAt || null,
-          status: state.LastStatus || null
+          status: state.LastStatus || null,
+          error: state.LastError
+            ? 'Consulta SEFAZ indisponível. Verifique o coletor e o certificado.'
+            : null,
+          lastAttemptAt: state.LastAttemptAt || null
         };
       } catch {
         return { id, name, available: true, updatedAt: null, nextAllowedAt: null, status: null };

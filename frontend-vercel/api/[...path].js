@@ -418,6 +418,41 @@ function documentDetailFromCloud(row) {
   };
 }
 
+let syncCache;
+async function syncOverview() {
+  if (syncCache && Date.now() - syncCache.at < 10000) return syncCache.value;
+  let value;
+  try {
+    const runs = await supabase(
+      '/rest/v1/crm_sync_runs?source=eq.falco-local&order=started_at.desc&limit=3&select=status,started_at,finished_at,details'
+    );
+    const successful = runs.find((row) => row.status === 'success');
+    const updatedAt = successful?.finished_at || null;
+    const ageSeconds = updatedAt
+      ? Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 1000))
+      : null;
+    value = {
+      updatedAt,
+      ageSeconds,
+      fresh: ageSeconds !== null && ageSeconds <= 120 && runs[0]?.status !== 'error',
+      collecting: runs[0]?.status === 'running',
+      sefaz: successful?.details?.sefaz || [],
+      pendingArtifacts: successful?.details?.pendingArtifacts ?? null
+    };
+  } catch {
+    value = {
+      updatedAt: null,
+      ageSeconds: null,
+      fresh: false,
+      collecting: false,
+      sefaz: [],
+      pendingArtifacts: null
+    };
+  }
+  syncCache = { at: Date.now(), value };
+  return value;
+}
+
 async function handleUsers(req, res, user, path) {
   if (user.role !== 'admin') return json(res, 403, { error: 'Acesso restrito ao administrador.' });
   const id = path.split('/')[3];
@@ -533,7 +568,15 @@ async function handle(req, res) {
     cookie(res, 'crm_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
     return json(res, 200, { ok: true });
   }
-  if (path === '/api/health') return json(res, 200, { ok: true, source: 'Supabase' });
+  if (path === '/api/health') {
+    const sync = await syncOverview();
+    return json(res, 200, {
+      ok: true,
+      source: 'Supabase',
+      lastSyncAt: sync.updatedAt,
+      syncFresh: sync.fresh
+    });
+  }
   const user = await currentUser(req);
   if (!user) return json(res, 401, { error: 'Sessão expirada. Entre novamente.' });
   if (path === '/api/users' || path.startsWith('/api/users/'))
@@ -564,11 +607,19 @@ async function handle(req, res) {
       sellerName: url.searchParams.get('vendedorNfe'),
       productCode: url.searchParams.get('produtoNfe')
     };
-    return json(res, 200, baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'outgoing', scope));
+    return json(res, 200, {
+      ...baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'outgoing', scope),
+      synchronization: await syncOverview()
+    });
   }
   if (path === '/api/falco/entradas') {
     const cloud = await cloudDocuments('incoming', url);
-    return json(res, 200, baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'incoming'));
+    const synchronization = await syncOverview();
+    return json(res, 200, {
+      ...baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'incoming'),
+      synchronization,
+      sync: synchronization.sefaz
+    });
   }
   if (path === '/api/falco/documento') {
     const type = url.searchParams.get('tipo') === 'entrada' ? 'incoming' : 'outgoing';

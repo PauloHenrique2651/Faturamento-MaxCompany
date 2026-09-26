@@ -1,6 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { artifactPaths, normalizeCloudDocument, selectArtifactBatch } from './supabase-sync.js';
+import {
+  artifactPaths,
+  normalizeCloudDocument,
+  selectArtifactBatch,
+  changedDocuments,
+  mergeArtifactQueue
+} from './supabase-sync.js';
+
+test('sincronização envia somente mudanças reais, ignorando timestamps de consulta', () => {
+  const row = {
+    company_id: 1,
+    direction: 'outgoing',
+    access_key: '1'.repeat(44),
+    amount: 100,
+    synced_at: 'primeiro'
+  };
+  const first = changedDocuments([row]);
+  assert.equal(first.changed.length, 1);
+  assert.equal(
+    changedDocuments([{ ...row, synced_at: 'segundo' }], first.fingerprints).changed.length,
+    0
+  );
+  assert.equal(changedDocuments([{ ...row, amount: 150 }], first.fingerprints).changed.length, 1);
+});
+
+test('fila histórica persiste enquanto os metadados consultam somente o período recente', () => {
+  const row = { company: 'MaxPlast', key: '1'.repeat(44) };
+  const state = { completedDocuments: {} };
+  state.artifactQueue = mergeArtifactQueue([row], [], state);
+  assert.equal(mergeArtifactQueue([], [], state).length, 1);
+  state.completedDocuments[artifactPaths(row, 'outgoing').id] = 'concluído';
+  assert.equal(mergeArtifactQueue([], [], state).length, 0);
+});
 
 test('normaliza uma NF-e de venda para armazenamento privado no Supabase', () => {
   const document = normalizeCloudDocument(
