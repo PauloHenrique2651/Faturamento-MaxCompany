@@ -1917,3 +1917,93 @@ dialog::backdrop {
   color: #805219;
   background: #fff2dd;
 }
+.fiscal-event-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0;
+}
+.fiscal-event-card {
+  display: grid;
+  gap: 8px;
+  padding: 20px 22px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 4px solid #bb7c20;
+  border-radius: 5px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.fiscal-event-card.cancel {
+  border-left-color: #b73c3c;
+}
+.fiscal-event-card span {
+  font-size: 12px;
+  font-weight: 700;
+}
+.fiscal-event-card strong {
+  font-size: 26px;
+  line-height: 1.15;
+}
+.fiscal-event-card small {
+  color: var(--muted);
+}
+.fiscal-event-card b {
+  color: var(--accent);
+  font-size: 11px;
+}
+.document-row.is-canceled {
+  background: #fff8f7;
+}
+.document-canceled {
+  display: inline-block;
+  margin-left: 8px;
+  color: #a33030;
+  font-weight: 700;
+}
+.dre-panel {
+  margin: 18px 0;
+}
+.dre-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 20px;
+  align-items: center;
+  padding: 14px 22px;
+  border-top: 1px solid var(--line);
+}
+.dre-row div {
+  display: grid;
+  gap: 4px;
+}
+.dre-row small {
+  color: var(--muted);
+}
+.dre-row b {
+  white-space: nowrap;
+}
+.dre-row a {
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: none;
+}
+.dre-pending {
+  padding: 15px 22px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  line-height: 1.5;
+}
+.commission-layout {
+  margin-top: 18px;
+}
+@media (max-width: 750px) {
+  .fiscal-event-grid {
+    grid-template-columns: 1fr;
+  }
+  .dre-row {
+    grid-template-columns: 1fr auto;
+  }
+  .dre-row a {
+    grid-column: 1 / -1;
+  }
+}

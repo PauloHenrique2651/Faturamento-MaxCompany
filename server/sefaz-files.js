@@ -499,6 +499,31 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
   for (const document of documents) {
     if (matchedReturns.has(document.key)) document.saleReference = matchedReturns.get(document.key);
   }
+  const canceledDocuments = [...invoices.entries()]
+    .filter(
+      ([id, row]) => row.date >= inicio && row.date <= fim && (row.canceled || canceled.has(id))
+    )
+    .map(([, row]) => ({
+      key: row.key,
+      company: row.company,
+      source: row.source,
+      date: row.date,
+      number: row.number,
+      series: row.series,
+      supplier: row.supplier,
+      value: money(row.amount),
+      full: row.full,
+      items: row.full ? row.items.length : null,
+      itemsDetail: row.full ? row.items : null,
+      taxes: row.full ? row.taxes : null,
+      freight: row.full ? row.freight : null,
+      fiscalOperation: row.fiscalOperation || null,
+      operation: row.operation || null,
+      purpose: row.purpose || null,
+      referencedKeys: row.referencedKeys || [],
+      canceled: true
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number));
   return {
     checkedAt: new Date().toISOString(),
     period: { inicio, fim },
@@ -523,10 +548,14 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
       incompleteCount: count - fullXmlCount,
       documents: documents.filter((row) => row.fiscalOperation?.type === 'return')
     },
-    canceledCount,
-    canceledDocuments: [...invoices.entries()]
-      .filter(([id, row]) => row.canceled || canceled.has(id))
-      .map(([, row]) => ({ key: row.key, company: row.company })),
+    canceledCount: canceledDocuments.length,
+    canceledValue: money(canceledDocuments.reduce((sum, row) => sum + row.value, 0)),
+    canceledPurchaseValue: money(
+      canceledDocuments
+        .filter((row) => row.full && row.fiscalOperation?.type === 'sale')
+        .reduce((sum, row) => sum + row.value, 0)
+    ),
+    canceledDocuments,
     fullXmlCount,
     summaryOnlyCount: count - fullXmlCount,
     itemCount,

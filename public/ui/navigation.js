@@ -4,6 +4,7 @@ export const viewLabels = {
   mostrador: 'Mostrador comercial',
   metas: 'Metas comerciais',
   faturamento: 'Faturamento',
+  dre: 'DRE gerencial',
   devolucoes: 'Devoluções',
   emitidas: 'NF-e emitidas',
   entradas: 'Compras e entradas',
@@ -25,6 +26,7 @@ export const navigationSections = [
       ['mostrador', 'dashboard'],
       ['metas', 'trend'],
       ['faturamento', 'trend'],
+      ['dre', 'wallet'],
       ['devolucoes', 'document'],
       ['fretes', 'box'],
       ['impostos', 'document']

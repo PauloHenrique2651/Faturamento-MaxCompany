@@ -5,6 +5,10 @@
   "rewrites": [
     { "source": "/api/commercial/targets", "destination": "/api/executive?crmRoute=targets" },
     {
+      "source": "/api/commercial/commissions",
+      "destination": "/api/executive?crmRoute=commissions"
+    },
+    {
       "source": "/api/commercial/equivalences",
       "destination": "/api/executive?crmRoute=equivalences"
     }

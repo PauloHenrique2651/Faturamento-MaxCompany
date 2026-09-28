@@ -18,6 +18,7 @@ import { renderDanfe } from './danfe.js';
 import { readSupabaseSyncStatus, syncSupabaseFromFalco } from './supabase-sync.js';
 import { crmCloudRequest } from './crm-store.js';
 import { salesTargetsRoute } from './sales-targets.js';
+import { sellerCommissionsRoute } from './seller-commissions.js';
 import { equivalencesRoute } from './product-equivalences.js';
 import {
   authenticate,
@@ -182,6 +183,9 @@ async function api(req, res, url, user) {
         invoiceCount,
         value,
         canceledCount,
+        canceledValue,
+        canceledSaleValue,
+        canceledDocuments,
         itemCount,
         taxes,
         simpleIcmsCredit,
@@ -199,6 +203,9 @@ async function api(req, res, url, user) {
         invoiceCount,
         value,
         canceledCount,
+        canceledValue,
+        canceledSaleValue,
+        canceledDocuments,
         itemCount,
         taxes,
         simpleIcmsCredit,
@@ -231,6 +238,9 @@ async function api(req, res, url, user) {
         purchaseCount,
         purchaseValue,
         canceledCount,
+        canceledValue,
+        canceledPurchaseValue,
+        canceledDocuments,
         fullXmlCount,
         summaryOnlyCount,
         taxes,
@@ -247,6 +257,9 @@ async function api(req, res, url, user) {
         purchaseCount,
         purchaseValue,
         canceledCount,
+        canceledValue,
+        canceledPurchaseValue,
+        canceledDocuments,
         fullXmlCount,
         summaryOnlyCount,
         taxes,
@@ -448,6 +461,16 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/commercial/targets') {
         const result = await salesTargetsRoute({
+          url,
+          method: req.method,
+          body,
+          user,
+          request: crmCloudRequest
+        });
+        return json(res, result.status, result.body);
+      }
+      if (url.pathname === '/api/commercial/commissions') {
+        const result = await sellerCommissionsRoute({
           url,
           method: req.method,
           body,

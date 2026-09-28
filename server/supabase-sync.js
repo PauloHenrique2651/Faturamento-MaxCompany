@@ -150,7 +150,7 @@ export function normalizeCloudDocument(row, direction) {
     freight: row.freight || null,
     is_full_xml: direction === 'outgoing' || Boolean(row.full),
     is_authorized: true,
-    is_canceled: false,
+    is_canceled: Boolean(row.canceled),
     source_payload: row,
     source_updated_at: new Date().toISOString(),
     synced_at: new Date().toISOString()
@@ -201,7 +201,7 @@ export function mergeArtifactQueue(outgoing, incoming, state) {
           key: row.key,
           full: row.full,
           direction,
-          priority: row.source === 'falco-import'
+          priority: row.source === 'falco-import' || Boolean(row.canceled)
         });
     }
   }
@@ -437,44 +437,26 @@ export async function syncSupabaseFromFalco() {
       readIncomingSyncStatus()
     ]);
     const userCount = await syncUsers();
-    const outgoingRows = outgoing.documents.map((row) => normalizeCloudDocument(row, 'outgoing'));
-    const incomingRows = incoming.documents.map((row) => normalizeCloudDocument(row, 'incoming'));
+    const outgoingRows = [...outgoing.documents, ...outgoing.canceledDocuments].map((row) =>
+      normalizeCloudDocument(row, 'outgoing')
+    );
+    const incomingRows = [...incoming.documents, ...incoming.canceledDocuments].map((row) =>
+      normalizeCloudDocument(row, 'incoming')
+    );
     const changes = changedDocuments(
       [...outgoingRows, ...incomingRows],
       state.documentFingerprints
     );
     await upsertDocuments(changes.changed);
     state.documentFingerprints = changes.fingerprints;
-    state.artifactQueue = mergeArtifactQueue(outgoing.documents, incoming.documents, state);
+    state.artifactQueue = mergeArtifactQueue(
+      [...outgoing.documents, ...outgoing.canceledDocuments],
+      [...incoming.documents, ...incoming.canceledDocuments],
+      state
+    );
     state.metadataInitialized = true;
     if (fullScan) state.lastFullScanAt = new Date().toISOString();
     await saveState(state);
-    for (const [direction, summary] of [
-      ['outgoing', outgoing],
-      ['incoming', incoming]
-    ]) {
-      for (const [companyName, companyId] of companies) {
-        const keys = [
-          ...new Set(
-            (summary.canceledDocuments || [])
-              .filter((row) => row.company === companyName)
-              .map((row) => row.key)
-          )
-        ];
-        for (let index = 0; index < keys.length; index += 100) {
-          const filters = new URLSearchParams({
-            company_id: `eq.${companyId}`,
-            direction: `eq.${direction}`,
-            access_key: `in.(${keys.slice(index, index + 100).join(',')})`
-          });
-          await request(`/rest/v1/fiscal_documents?${filters}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-            body: JSON.stringify({ is_canceled: true, synced_at: new Date().toISOString() })
-          });
-        }
-      }
-    }
     let artifactCount = 0;
     let artifactAttempts = 0;
     let artifactErrors = 0;

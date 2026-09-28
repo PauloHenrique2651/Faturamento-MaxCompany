@@ -25,6 +25,7 @@ export const state = {
   equivalences: [],
   equivalencesAt: 0,
   targets: [],
+  commissionRules: [],
   mostradorSlide: 0,
   mostradorPaused: false,
   mostradorSort: 'net',

@@ -592,7 +592,7 @@ function documentRows(rows, type, limit = state.documentLimit) {
           : '';
       const cfops = [...new Set((row.itemsDetail || []).map((item) => item.cfop).filter(Boolean))];
       const fiscalTags = `<small class="document-cfops">${cfops.map((code) => `<span class="cfop-badge" title="${esc(cfopDescription(code))}">CFOP ${esc(code)}</span>`).join(' ')}</small>`;
-      return `<button class="document-row" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)} · ${esc(type === 'entrada' && row.fiscalOperation?.type === 'sale' ? 'Compra / entrada de fornecedor' : operationLabel(row.fiscalOperation?.type))}${fiscalTags}${availability}</span><strong>${money(row.value)}</strong></button>`;
+      return `<button class="document-row${row.canceled ? ' is-canceled' : ''}" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}" data-invoice-canceled="${row.canceled ? 'true' : 'false'}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)} · ${esc(type === 'entrada' && row.fiscalOperation?.type === 'sale' ? 'Compra / entrada de fornecedor' : operationLabel(row.fiscalOperation?.type))}${row.canceled ? '<small class="document-canceled">Cancelada</small>' : ''}${fiscalTags}${availability}</span><strong>${money(row.value)}</strong></button>`;
     })
     .join(
       ''
@@ -751,6 +751,7 @@ function revenueDashboard() {
     ) +
     nfeSource(data, true) +
     `<section class="kpis">${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas · ${money(data.saleValue)}`, 'trend', true, href('emitidas', { operacao: 'venda' }), 'Soma das NF-e classificadas como venda, autorizadas e não canceladas no período.')}${kpi('Faturamento líquido', bigMoney(net), money(net), 'wallet', false, '', 'Vendas faturadas menos devoluções de clientes confirmadas e vinculadas.')}${kpi('Devoluções confirmadas', bigMoney(returned), `${num(received?.linkedToSaleCount || 0)} vinculadas · ${money(returned)}`, 'document', false, href('devolucoes'), 'Devoluções recebidas de clientes com referência confirmada a uma venda válida.')}${kpi('Outras operações', bigMoney(other), money(other), 'box', false, href('emitidas', { operacao: 'outras' }), 'Transferências, bonificações, ajustes, complementares, mistas, outras e não classificadas.')}${kpi('Movimentação faturada', bigMoney(data.value), money(data.value), 'wallet', false, '', 'Total dos documentos emitidos considerados pela regra fiscal atual.')}${kpi('Taxa de devolução', `${num(data.saleValue ? (returned / data.saleValue) * 100 : 0)}%`, 'Devoluções confirmadas ÷ vendas faturadas', 'target')}</section>` +
+    fiscalEventCards(data, state.incomingData) +
     `<div class="revenue-equation"><span>${money(data.saleValue)} <small>vendas faturadas</small></span><b>−</b><span>${money(returned)} <small>devoluções ligadas à venda</small></span><b>=</b><strong>${money(net)}</strong></div>` +
     `<div class="notice">Do total emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores e ${money(Math.max(0, data.value - data.saleValue - data.returns.value))} são outras operações ou operações mistas. Essas saídas não reduzem as vendas acima. ${num((received?.count || 0) - (received?.linkedToSaleCount || 0))} devoluções recebidas não têm vínculo confirmado com venda; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${reconciliationPanel(data)}${coveragePanel(data)}</div>` +
@@ -758,7 +759,34 @@ function revenueDashboard() {
     `<div class="nfe-charts nfe-charts-secondary">${averagePanel({ ...data, value: data.saleValue })}${forecastPanel(month ? { ...month, value: month.saleValue } : null, state.previousMonthData ? { ...state.previousMonthData, value: state.previousMonthData.saleValue } : null, state.monthIncomingData?.returns?.linkedToSaleValue ?? null)}</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendedores', 'Valor das NF-e atribuído no XML', data.sellers, false, 12, 'seller')}${nfeRanking('Grupos de clientes', 'Valor consolidado dos CNPJs', data.customerGroups, false, 12, 'customerGroup')}</div>` +
     `<article class="panel analytic-panel">${panelHead('Composição documentada', 'Valores informados no total da NF-e')}${metricPanel('Descontos', data.discountValue, 'vDesc dos XMLs')}${metricPanel('Frete destacado', data.freightValue, 'vFrete dos XMLs')}${metricPanel('Ticket médio por NF-e', data.invoiceCount ? data.value / data.invoiceCount : 0, 'Valor total ÷ NF-e')}</article>` +
-    `<p class="nfe-note">A venda é identificada pelos CFOPs dos itens da NF-e inteira. O saldo usa somente devoluções recebidas com referência a uma venda autorizada da mesma empresa e do mesmo CNPJ. Notas sem vínculo, ajustes, custos, lucro, margem, markup e impostos efetivamente pagos dependem de conciliação adicional.</p>`;
+    `<p class="nfe-note">A venda é identificada pelos CFOPs dos itens da NF-e inteira. O saldo usa somente devoluções recebidas com referência a uma venda autorizada da mesma empresa e do mesmo CNPJ. Cancelamentos já estão excluídos das vendas e não são abatidos de novo. O markup de referência considera apenas itens com compra anterior conciliada; não representa margem contábil.</p>`;
+}
+function fiscalEventCards(outgoing, incoming) {
+  const returns = incoming?.returns || {};
+  return `<section class="fiscal-event-grid" aria-label="Devoluções e cancelamentos"><a class="fiscal-event-card return" href="${esc(href('devolucoes'))}"><span>Devoluções de clientes</span><strong>${money(returns.linkedToSaleValue || 0)}</strong><small>${num(returns.linkedToSaleCount || 0)} vinculadas a vendas · ${num(Math.max(0, (returns.count || 0) - (returns.linkedToSaleCount || 0)))} sem vínculo confirmado</small><b>Examinar devoluções →</b></a><a class="fiscal-event-card cancel" href="${esc(href('emitidas', { operacao: 'canceladas' }))}"><span>NF-e emitidas canceladas</span><strong>${money(outgoing.canceledValue || 0)}</strong><small>${num(outgoing.canceledCount || 0)} notas · ${money(outgoing.canceledSaleValue || 0)} em vendas canceladas</small><b>Abrir notas canceladas →</b></a></section>`;
+}
+function dreDashboard() {
+  const sales = Number(state.nfeData?.saleValue || 0);
+  const returns = Number(state.incomingData?.returns?.linkedToSaleValue || 0);
+  const net = sales - returns;
+  const match = state.purchaseHistory
+    ? reconcilePurchases(state.nfeData, state.purchaseHistory, { equivalences: state.equivalences })
+    : null;
+  const row = (label, value, detail, target = '') =>
+    `<div class="dre-row"><div><strong>${esc(label)}</strong><small>${esc(detail)}</small></div><b>${money(value)}</b>${target ? `<a href="${esc(href(target))}">Ver origem →</a>` : ''}</div>`;
+  $('#page').innerHTML =
+    head(
+      'DRE gerencial · base documental',
+      'Conciliação de NF-e por empresa e período. Resultado contábil depende de custos, despesas e tributos que não constam integralmente nos XMLs.',
+      'MaxCompany / Gestão'
+    ) +
+    nfeSource(state.nfeData, true) +
+    `<section class="kpis">${kpi('Vendas faturadas', bigMoney(sales), money(sales), 'trend', true, href('emitidas', { operacao: 'venda' }))}${kpi('Devoluções vinculadas', bigMoney(returns), money(returns), 'document', false, 'devolucoes')}${kpi('Receita após devoluções', bigMoney(net), money(net), 'wallet')}${kpi('Compras no período', bigMoney(state.incomingData?.purchaseValue || 0), 'Movimento de compras; não é CMV', 'box', false, 'entradas')}</section>` +
+    fiscalEventCards(state.nfeData, state.incomingData) +
+    `<article class="panel dre-panel">${panelHead('Ponte de receita', 'Valores confirmados nos documentos do período')}${row('(+) Vendas autorizadas', sales, 'NF-e de saída com CFOP de venda; canceladas excluídas', 'emitidas')}${row('(−) Devoluções de clientes', -returns, 'Somente entradas vinculadas à venda válida', 'devolucoes')}${row('(=) Receita após devoluções', net, 'Saldo documental, anterior a impostos, custos e despesas')}${row('Cancelamentos identificados', state.nfeData.canceledSaleValue || 0, 'Informativo: já excluídos das vendas, sem novo abatimento', 'emitidas')}</article>` +
+    `<article class="panel dre-panel">${panelHead('Custos e resultado', 'Acompanhamento sem estimar dados ausentes')}${row('Compras documentadas', state.incomingData?.purchaseValue || 0, 'Entradas por CFOP de venda do fornecedor; não equivalem ao custo vendido', 'entradas')}${match?.purchaseReferenceValue ? row('Preço de compra de itens conciliados', match.purchaseReferenceValue, `${num(match.matchedLines)} de ${num(match.saleLines)} linhas vendidas conciliadas; referência parcial`) : '<div class="dre-pending">Preço de compra das vendas: sem cobertura suficiente para apurar CMV.</div>'}<div class="dre-pending">CMV, tributos sobre receita, despesas operacionais, despesas financeiras e IR/CSLL: aguardam lançamentos contábeis ou fiscais conciliados. O resultado líquido não é calculado.</div></article>` +
+    purchaseMatchPanel(state.nfeData, state.purchaseHistory) +
+    `<p class="nfe-note">Período pela emissão da NF-e. A linha de compras é movimento de entrada, não despesa do DRE. Cancelamentos e devoluções de fornecedores não são vendas. Este painel não substitui o DRE contábil nem afirma lucro ou Mk.B % com cobertura parcial.</p>`;
 }
 function purchaseMatchPanel(outgoing, incoming) {
   if (!incoming)
@@ -776,7 +804,7 @@ function purchaseMatchPanel(outgoing, incoming) {
     `<button type="button" class="text-button" data-invoice="${esc(key)}" data-invoice-type="${type}" data-invoice-company="${row.saleCompanyId || ids[row.saleCompany] || ''}">Abrir NF-e</button>`;
   return `<article class="panel purchase-match">${panelHead('Entradas × saídas', 'Preço de compra documentado confrontado com itens vendidos no mesmo CNPJ')}
     <div class="purchase-match-stats"><div><span>Itens vendidos</span><strong>${num(result.saleLines)}</strong></div><div><span>Correspondência comprovável</span><strong>${num(result.matchedLines)}</strong><small>${result.saleLines ? num((result.matchedLines / result.saleLines) * 100) : '0'}% dos itens</small></div><div><span>Sem correspondência</span><strong>${num(result.unmatchedLines)}</strong></div><div><span>Compra mais recente com preços divergentes</span><strong>${num(result.ambiguousLines)}</strong></div></div>
-    <div class="purchase-match-note"><strong>Diferença parcial entre venda e última compra: ${result.matchedLines ? money(result.difference) : 'Não calculável'}</strong><p>Somente ${money(result.matchedSaleValue)} em itens vendidos tiveram correspondência; preço de referência de compra ${money(result.purchaseReferenceValue)}. Isto não é lucro, custo de estoque nem margem contábil. Não inclui frete, tributos recuperáveis, despesas, descontos fora do item ou lote efetivamente baixado.</p></div>
+    <div class="purchase-match-note"><strong>Markup de referência dos itens conciliados: ${result.purchaseReferenceValue > 0 ? `${num((result.matchedSaleValue / result.purchaseReferenceValue - 1) * 100)}%` : 'Não calculável'}</strong><p>Diferença parcial: ${result.matchedLines ? money(result.difference) : 'Não calculável'}. Somente ${money(result.matchedSaleValue)} em itens vendidos tiveram correspondência; preço de referência de compra ${money(result.purchaseReferenceValue)}. Isto não é lucro, custo de estoque nem margem contábil. Não inclui frete, tributos recuperáveis, despesas, descontos fora do item ou lote efetivamente baixado.</p></div>
     ${
       result.matches.length
         ? `<div class="purchase-match-table"><table><thead><tr><th>Produto vendido</th><th>Venda</th><th>Compra de referência</th><th>Critério</th><th>Documentos</th></tr></thead><tbody>${result.matches
@@ -991,9 +1019,12 @@ function outgoingDocuments() {
     other: 'other',
     unknown: 'unknown'
   };
-  const filtered = data.documents.filter(
+  const filtered = (
+    operation === 'canceladas' ? data.canceledDocuments || [] : data.documents
+  ).filter(
     (row) =>
       operation === 'todos' ||
+      operation === 'canceladas' ||
       (operation === 'outras'
         ? !['sale', 'return', 'industrial-return'].includes(row.fiscalOperation?.type)
         : row.fiscalOperation?.type === operationTypes[operation])
@@ -1006,8 +1037,8 @@ function outgoingDocuments() {
     ) +
     nfeSource(data, true) +
     nfeTrail() +
-    `<section class="kpis">${kpi('NF-e', num(data.invoiceCount), 'No período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('Itens', num(data.itemCount), 'Linhas de XML', 'box')}${kpi('Cancelamentos', num(data.canceledCount), 'Eventos identificados', 'target')}</section>` +
-    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir itens, impostos, XML e DANFE')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todos os documentos</option><option value="venda">Somente vendas por CFOP</option><option value="devolucao">Devoluções de compra emitidas</option><option value="transfer">Transferências</option><option value="bonus">Bonificações</option><option value="complementary">Complementares</option><option value="adjustment">Ajustes</option><option value="industrial">Retornos de industrialização</option><option value="mixed">Operações mistas</option><option value="other">Outras operações classificadas</option><option value="unknown">Não classificadas</option><option value="outras">Todas exceto venda/devolução/retorno</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'saida')}</article>`;
+    `<section class="kpis">${kpi('NF-e autorizadas', num(data.invoiceCount), 'Não canceladas · no período', 'document', true)}${kpi('Valor autorizado', bigMoney(data.value), money(data.value), 'wallet')}${kpi('Canceladas', num(data.canceledCount || 0), 'Eventos confirmados', 'target', false, href('emitidas', { operacao: 'canceladas' }))}${kpi('Valor cancelado', bigMoney(data.canceledValue || 0), `${money(data.canceledSaleValue || 0)} em vendas`, 'wallet', false, href('emitidas', { operacao: 'canceladas' }))}</section>` +
+    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir itens, impostos, XML e DANFE')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Documentos autorizados</option><option value="canceladas">Notas canceladas</option><option value="venda">Somente vendas por CFOP</option><option value="devolucao">Devoluções de compra emitidas</option><option value="transfer">Transferências</option><option value="bonus">Bonificações</option><option value="complementary">Complementares</option><option value="adjustment">Ajustes</option><option value="industrial">Retornos de industrialização</option><option value="mixed">Operações mistas</option><option value="other">Outras operações classificadas</option><option value="unknown">Não classificadas</option><option value="outras">Todas exceto venda/devolução/retorno</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'saida')}</article>`;
   $('#operation-filter').value = operation;
   $('#operation-filter').onchange = (event) =>
     go('emitidas', { operacao: event.target.value === 'todos' ? null : event.target.value });
@@ -1045,9 +1076,12 @@ function searchDashboard(data = null) {
 function incomingDocuments() {
   const data = state.incomingData;
   const operation = state.params.get('operacao') || 'todos';
-  const filtered = data.documents.filter(
+  const filtered = (
+    operation === 'canceladas' ? data.canceledDocuments || [] : data.documents
+  ).filter(
     (row) =>
       operation === 'todos' ||
+      operation === 'canceladas' ||
       (operation === 'devolucao'
         ? row.fiscalOperation?.type === 'return'
         : operation === 'vinculada'
@@ -1063,8 +1097,8 @@ function incomingDocuments() {
       'MaxCompany / Documentos'
     ) +
     `<div class="nfe-source"><span class="nfe-live">Fonte: SEFAZ e importações do Falco</span><span>${data.sourcesAvailable}/${data.sourcesTotal} empresas consultadas</span></div>` +
-    `<section class="kpis">${kpi('NF-e', num(data.invoiceCount), 'No período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e tributos', 'box')}${data.summaryOnlyCount ? kpi('Resumos', num(data.summaryOnlyCount), 'Sem itens detalhados', 'target') : ''}</section>` +
-    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir o documento recebido')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todas as entradas</option><option value="compra">Compras identificadas</option><option value="devolucao">Devoluções recebidas</option><option value="vinculada">Devoluções ligadas a venda</option><option value="demais">Demais entradas</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'entrada')}</article>`;
+    `<section class="kpis">${kpi('NF-e recebidas', num(data.invoiceCount), 'Não canceladas · no período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('Canceladas', num(data.canceledCount || 0), money(data.canceledValue || 0), 'target', false, href('recebidas', { operacao: 'canceladas' }))}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e tributos', 'box')}</section>` +
+    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir o documento recebido')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Entradas não canceladas</option><option value="canceladas">Entradas canceladas</option><option value="compra">Compras identificadas</option><option value="devolucao">Devoluções recebidas</option><option value="vinculada">Devoluções ligadas a venda</option><option value="demais">Demais entradas</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'entrada')}</article>`;
   $('#operation-filter').value = operation;
   $('#operation-filter').onchange = (event) =>
     go('recebidas', { operacao: event.target.value === 'todos' ? null : event.target.value });
@@ -1129,6 +1163,26 @@ function metasPage() {
       'MaxCompany / Gestão'
     ) +
     `<section class="targets-layout"><form id="target-form" class="panel targets-form"><h2>Definir meta</h2><p>Metas mensais prevalecem sobre trimestrais e anuais no mesmo período. A distribuição diária considera segunda a sexta-feira, sem feriados.</p><label>Escopo<select name="scopeType" id="target-scope"><option value="group">Grupo MaxCompany</option><option value="company">Empresa</option><option value="seller">Vendedor</option></select></label><label class="target-entity" id="target-company-field" hidden>Empresa<select name="companyKey"><option value="1">MaxPlast</option><option value="2">MaxSafety</option><option value="3">MaxSupply</option><option value="4">MaxSupply · Filial ES</option></select></label><label class="target-entity" id="target-seller-field" hidden>Vendedor<input name="sellerName" list="target-sellers" placeholder="Nome no XML da NF-e"><datalist id="target-sellers">${sellers.map((row) => `<option value="${esc(row.name)}"></option>`).join('')}</datalist></label><label>Periodicidade<select name="periodKind" id="target-kind"><option value="month">Mensal</option><option value="quarter">Trimestral</option><option value="year">Anual</option></select></label><label>Início<input name="periodStart" id="target-period" type="date" value="${today().slice(0, 7)}-01" required></label><label>Valor da meta (R$)<input name="amount" type="number" min="0" max="999999999999" step="0.01" required></label><p id="target-error" role="alert"></p><button class="button primary" type="submit">Salvar meta</button></form><section class="panel targets-list"><h2>Metas cadastradas</h2><p>Alterações feitas aqui aparecem para toda a equipe autorizada.</p>${state.targets.length ? `<div class="targets-table-wrap"><table><thead><tr><th>Escopo</th><th>Nome</th><th>Período</th><th>Meta</th><th></th></tr></thead><tbody>${state.targets.map((row) => `<tr><td>${scopeLabel[row.scope_type] || ''}</td><td>${esc(row.scope_name)}</td><td>${kindLabel[row.period_kind] || ''} · ${esc(row.period_start)}</td><td>${money(row.amount)}</td><td><button type="button" data-target-delete="${esc(row.id)}" aria-label="Excluir meta de ${esc(row.scope_name)}">Excluir</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><h3>Nenhuma meta cadastrada</h3><p>Cadastre a primeira meta para comparar realizado e projeção.</p></div>'}</section></section>`;
+  const sellerKey = (name) =>
+    String(name || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .trim();
+  const salesBySeller = new Map(sellers.map((row) => [sellerKey(row.name), row]));
+  $('#page').insertAdjacentHTML(
+    'beforeend',
+    `<section class="targets-layout commission-layout"><form id="seller-commission-form" class="panel targets-form"><h2>Comissão por vendedor</h2><p>Defina o percentual individual. A regra é compartilhada e não altera o Falco.</p><label>Vendedor<input name="sellerName" list="target-sellers" placeholder="Nome no XML da NF-e" required></label><label>Comissão sobre vendas autorizadas (%)<input name="ratePercent" type="number" min="0" max="100" step="0.0001" required></label><p id="seller-commission-error" role="alert"></p><button class="button primary" type="submit">Salvar comissão</button></form><section class="panel targets-list"><h2>Regras individuais</h2><p>Projeção sobre vendas atribuídas no XML no período selecionado. Não é valor devido em folha: devoluções, cancelamentos posteriores e ajustes precisam de conferência.</p>${
+      state.commissionRules.length
+        ? `<div class="targets-table-wrap"><table><thead><tr><th>Vendedor</th><th>Percentual</th><th>Vendas do período</th><th>Projeção</th><th></th></tr></thead><tbody>${state.commissionRules
+            .map((rule) => {
+              const sale = salesBySeller.get(rule.seller_key);
+              return `<tr><td>${esc(rule.seller_name)}</td><td>${num(rule.rate_percent)}%</td><td>${money(sale?.value || 0)}</td><td>${money(((sale?.value || 0) * rule.rate_percent) / 100)}</td><td><button type="button" data-commission-delete="${esc(rule.id)}" aria-label="Excluir comissão de ${esc(rule.seller_name)}">Excluir</button></td></tr>`;
+            })
+            .join('')}</tbody></table></div>`
+        : '<div class="empty"><h3>Nenhuma comissão definida</h3><p>Salve uma regra individual para projetar valores.</p></div>'
+    }</section></section>`
+  );
 }
 function reportCatalog() {
   const query = (state.reportSearch || '').trim().toLocaleLowerCase('pt-BR');
@@ -1341,6 +1395,7 @@ function nfeDashboard() {
     ) +
     nfeSource(data, true) +
     `<section class="kpis">${kpi('Total das NF-e emitidas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas`, 'trend', false, href('emitidas', { operacao: 'venda' }))}${kpi('Devoluções de clientes confirmadas', bigMoney(state.incomingData?.returns?.linkedToSaleValue || 0), `${num(state.incomingData?.returns?.linkedToSaleCount || 0)} vinculadas · ${num((state.incomingData?.returns?.count || 0) - (state.incomingData?.returns?.linkedToSaleCount || 0))} sem vínculo`, 'document', false, href('devolucoes'))}${kpi('Vendas após devoluções confirmadas', bigMoney(data.saleValue - (state.incomingData?.returns?.linkedToSaleValue || 0)), 'Saldo gerencial documentado', 'wallet', false, 'faturamento')}</section>` +
+    fiscalEventCards(data, state.incomingData) +
     `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Evolução diária', 'Emissão por data da NF-e')}<div class="nfe-chart-switch"><button data-chart-mode="value" class="${mode === 'value' ? 'active' : ''}">Valor</button><button data-chart-mode="count" class="${mode === 'count' ? 'active' : ''}">Quantidade</button></div>${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Gráfico de ${mode === 'value' ? 'valor' : 'quantidade'} de NF-e por dia">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(maximum * part)}" y2="${y(maximum * part)}" stroke="#e4e5e9"/><text x="44" y="${y(maximum * part) + 4}" text-anchor="end">${mode === 'value' ? short(maximum * part) : num(maximum * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[metric])}" r="${rows.length > 90 ? 1.5 : 3.2}" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} notas</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : '<div class="empty"><h2>Sem notas neste período</h2><p>Selecione outra data para consultar os XMLs disponíveis.</p></div>'}</article><article class="panel nfe-companies">${panelHead('Por empresa', 'Valor das NF-e autorizadas')}${data.companies.length ? data.companies.map((company) => `<div class="nfe-company"><div><strong>${esc(company.name)}</strong><span>${num(company.count)} notas · ${money(company.value)}</span></div><div class="nfe-bar"><span style="width:${(company.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma empresa com notas no período.')}</article></div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendas por vendedor', `${num(data.unattributedCount)} notas sem vendedor no XML`, data.sellers, false, 8, 'seller')}${nfeRanking('Principais clientes', 'Valor consolidado por grupo de CNPJs', data.customerGroups, false, 8, 'customerGroup')}</div>` +
     `<div class="nfe-charts nfe-charts-secondary nfe-products-row">${nfeRanking('Principais produtos', 'Valor bruto dos itens das NF-e', data.products, true, 8, 'product')}</div>` +
@@ -1380,17 +1435,19 @@ async function load(background = false) {
         params.set('fim', period.end);
       }
       const year = period.start.slice(0, 4);
-      const [outgoing, incoming, targets] = await Promise.all([
+      const [outgoing, incoming, targets, commissionRules] = await Promise.all([
         fetchJson(`/api/falco/nfe?${params}`),
         state.view === 'mostrador'
           ? fetchJson(`/api/falco/entradas?${params}`)
           : Promise.resolve(null),
-        fetchJson(`/api/commercial/targets?start=${year}-01-01&end=${year}-12-31`)
+        fetchJson(`/api/commercial/targets?start=${year}-01-01&end=${year}-12-31`),
+        state.view === 'metas' ? fetchJson('/api/commercial/commissions') : Promise.resolve([])
       ]);
       if (seq !== state.seq) return;
       state.nfeData = outgoing;
       state.incomingData = incoming;
       state.targets = targets;
+      state.commissionRules = commissionRules;
       if (state.view === 'mostrador') paintMostrador();
       else metasPage();
       $('#sync-status').textContent =
@@ -1432,6 +1489,7 @@ async function load(background = false) {
       [
         'dashboard',
         'faturamento',
+        'dre',
         'devolucoes',
         'emitidas',
         'vendedores',
@@ -1444,11 +1502,11 @@ async function load(background = false) {
     ) {
       state.nfeData = await fetchJson(`/api/falco/nfe?${state.params}`);
       if (seq !== state.seq) return;
-      if (['dashboard', 'faturamento', 'devolucoes'].includes(state.view)) {
+      if (['dashboard', 'faturamento', 'dre', 'devolucoes'].includes(state.view)) {
         state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
         if (seq !== state.seq) return;
       }
-      if (state.view === 'faturamento') {
+      if (state.view === 'faturamento' || state.view === 'dre') {
         const monthStart = `${today().slice(0, 7)}-01`;
         const previous = previousMonthAligned(today());
         const monthScope = new URLSearchParams(state.params);
@@ -1477,6 +1535,7 @@ async function load(background = false) {
       showXmlCompanies();
       if (state.view === 'dashboard') nfeDashboard();
       else if (state.view === 'faturamento') revenueDashboard();
+      else if (state.view === 'dre') dreDashboard();
       else if (state.view === 'devolucoes') returnsDashboard();
       else if (state.view === 'emitidas') outgoingDocuments();
       else if (state.view === 'fretes') freightDashboard();
@@ -1909,6 +1968,20 @@ document.addEventListener('click', (e) => {
       });
     return;
   }
+  const deleteCommission = e.target.closest('[data-commission-delete]');
+  if (deleteCommission) {
+    deleteCommission.disabled = true;
+    sendJson(
+      `/api/commercial/commissions?id=${encodeURIComponent(deleteCommission.dataset.commissionDelete)}`,
+      'DELETE'
+    )
+      .then(() => load(true))
+      .catch((error) => {
+        $('#seller-commission-error').textContent = error.message;
+        deleteCommission.disabled = false;
+      });
+    return;
+  }
   const invoice = e.target.closest('[data-invoice]');
   if (invoice) {
     openInvoice(
@@ -2000,6 +2073,20 @@ document.addEventListener('change', (e) => {
   }
 });
 document.addEventListener('submit', async (event) => {
+  if (event.target.id === 'seller-commission-form') {
+    event.preventDefault();
+    const form = event.target;
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      await sendJson('/api/commercial/commissions', 'POST', Object.fromEntries(new FormData(form)));
+      await load(true);
+    } catch (error) {
+      $('#seller-commission-error').textContent = error.message;
+      button.disabled = false;
+    }
+    return;
+  }
   if (event.target.id !== 'target-form') return;
   event.preventDefault();
   const form = event.target;

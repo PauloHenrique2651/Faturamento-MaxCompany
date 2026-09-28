@@ -583,6 +583,34 @@ export async function readNfeSummary(inicio, fim, companyId = null, scope = {}) 
     total: row.value,
     sale: roundMoney(salesByDate.get(row.date) || 0)
   }));
+  const canceledDocuments = [
+    ...new Map(
+      parsed
+        .filter((row) => row.kind === 'invoice' && canceledInPeriod.has(row.key))
+        .map((row) => [
+          row.key,
+          {
+            key: row.key,
+            company: row.company,
+            date: row.date,
+            number: row.number,
+            series: row.series,
+            customer: row.customer,
+            seller: row.seller,
+            value: roundMoney(row.amount),
+            items: row.items.length,
+            itemsDetail: row.items,
+            taxes: row.taxes,
+            freight: row.freight,
+            fiscalOperation: row.fiscalOperation,
+            operation: row.operation,
+            purpose: row.purpose,
+            referencedKeys: row.referencedKeys,
+            canceled: true
+          }
+        ])
+    ).values()
+  ].sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number));
   return {
     checkedAt: new Date().toISOString(),
     scope: {
@@ -635,10 +663,14 @@ export async function readNfeSummary(inicio, fim, companyId = null, scope = {}) 
         }))
         .sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number))
     },
-    canceledCount: canceledInPeriod.size,
-    canceledDocuments: parsed
-      .filter((row) => row.kind === 'invoice' && canceledInPeriod.has(row.key))
-      .map((row) => ({ key: row.key, company: row.company })),
+    canceledCount: canceledDocuments.length,
+    canceledValue: roundMoney(canceledDocuments.reduce((sum, row) => sum + row.value, 0)),
+    canceledSaleValue: roundMoney(
+      canceledDocuments
+        .filter((row) => row.fiscalOperation?.type === 'sale')
+        .reduce((sum, row) => sum + row.value, 0)
+    ),
+    canceledDocuments,
     itemCount,
     customerCount: historicGroupCustomers.size || byCustomer.size,
     customerGroupCount: byCustomerGroup.size,

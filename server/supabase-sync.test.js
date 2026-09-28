@@ -56,6 +56,11 @@ test('normaliza uma NF-e de venda para armazenamento privado no Supabase', () =>
   assert.equal(document.counterparty_name, 'Cliente teste');
   assert.equal(document.fiscal_operation.type, 'sale');
   assert.equal(document.is_full_xml, true);
+  assert.equal(document.is_canceled, false);
+  assert.equal(
+    normalizeCloudDocument({ company: 'MaxPlast', canceled: true }, 'outgoing').is_canceled,
+    true
+  );
 });
 
 test('backfill ignora concluídos sem consumir o limite e alterna saídas e entradas', () => {

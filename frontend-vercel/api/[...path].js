@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { fiscalBreakdown, scopedDocuments, searchDocuments } from '../lib/cloud-fiscal.js';
 import { classifyFiscalOperation } from '../lib/fiscal-operation.js';
 import { salesTargetsRoute } from '../../server/sales-targets.js';
+import { sellerCommissionsRoute } from '../../server/seller-commissions.js';
 import { equivalencesRoute } from '../../server/product-equivalences.js';
 
 const scrypt = promisify(scryptCallback);
@@ -268,8 +269,7 @@ async function cloudDocuments(direction, url) {
     `direction=eq.${direction}`,
     `issued_on=gte.${inicio}`,
     `issued_on=lte.${fim}`,
-    'is_authorized=eq.true',
-    'is_canceled=eq.false'
+    'is_authorized=eq.true'
   ];
   const company = Number(url.searchParams.get('empresa'));
   if ([1, 2, 3, 4].includes(company)) filters.push(`company_id=eq.${company}`);
@@ -296,6 +296,7 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
   let freight = 0;
   let credit = 0;
   const documents = rows.filter((row) => !row.canceled);
+  const canceledDocuments = rows.filter((row) => row.canceled);
   for (const row of documents) {
     const value = amount(row);
     total += value;
@@ -315,7 +316,7 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
       item.value += value;
       parties.set(id, item);
     }
-    if (direction === 'outgoing' && row.seller) {
+    if (direction === 'outgoing' && row.seller && row.fiscalOperation?.type === 'sale') {
       const item = sellers.get(row.seller) || {
         id: row.seller,
         name: row.seller,
@@ -359,7 +360,19 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
     value: money(total),
     saleValue: money(operations.get('sale')?.value || 0),
     operations: [...operations.values()].map((row) => ({ ...row, value: money(row.value) })),
-    canceledCount: rows.length - documents.length,
+    canceledCount: canceledDocuments.length,
+    canceledValue: money(canceledDocuments.reduce((sum, row) => sum + amount(row), 0)),
+    canceledSaleValue: money(
+      canceledDocuments
+        .filter((row) => row.fiscalOperation?.type === 'sale')
+        .reduce((sum, row) => sum + amount(row), 0)
+    ),
+    canceledPurchaseValue: money(
+      canceledDocuments
+        .filter((row) => row.full && row.fiscalOperation?.type === 'sale')
+        .reduce((sum, row) => sum + amount(row), 0)
+    ),
+    canceledDocuments,
     itemCount: items,
     freightValue: money(freight),
     simpleIcmsCredit: money(credit),
@@ -551,7 +564,8 @@ async function handle(req, res) {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
   const crmRoute = url.searchParams.get('crmRoute');
   const path =
-    url.pathname === '/api/executive' && ['targets', 'equivalences'].includes(crmRoute)
+    url.pathname === '/api/executive' &&
+    ['targets', 'equivalences', 'commissions'].includes(crmRoute)
       ? `/api/commercial/${crmRoute}`
       : url.pathname;
   if (path === '/api/auth/login' && req.method === 'POST') {
@@ -592,6 +606,16 @@ async function handle(req, res) {
     return handleUsers(req, res, user, path);
   if (path === '/api/commercial/targets') {
     const result = await salesTargetsRoute({
+      url,
+      method: req.method,
+      body: req.method === 'POST' ? await requestBody(req) : {},
+      user,
+      request: supabase
+    });
+    return json(res, result.status, result.body);
+  }
+  if (path === '/api/commercial/commissions') {
+    const result = await sellerCommissionsRoute({
       url,
       method: req.method,
       body: req.method === 'POST' ? await requestBody(req) : {},

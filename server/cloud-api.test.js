@@ -15,6 +15,22 @@ test('Vercel publica uma rota explícita para o detalhe e arquivos da NF-e', () 
   assert.equal(rootDocumentRoute, handler);
 });
 
+test('cancelamentos preservam valor e documento, sem inflar vendas autorizadas', () => {
+  const sale = row({ fiscalOperation: { type: 'sale' }, value: 150 });
+  const canceled = row({
+    key: '35260912345678000123550010000000021000000020',
+    fiscalOperation: { type: 'sale' },
+    value: 90,
+    canceled: true
+  });
+  const summary = baseSummary([sale, canceled], '2026-09-01', '2026-09-30', 'outgoing');
+  assert.equal(summary.saleValue, 150);
+  assert.equal(summary.value, 150);
+  assert.equal(summary.canceledValue, 90);
+  assert.equal(summary.canceledSaleValue, 90);
+  assert.equal(summary.canceledDocuments.length, 1);
+});
+
 test('produtos e clientes incluem somente vendas, nunca remessa e retorno da Plastireal', () => {
   const sale = row({
     customer: { id: '12345678000123', name: 'Cliente' },
