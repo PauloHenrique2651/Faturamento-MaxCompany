@@ -546,7 +546,11 @@ export { baseSummary, documentFromCloud, documentDetailFromCloud, storageCandida
 
 async function handle(req, res) {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
-  const path = url.pathname;
+  const crmRoute = url.searchParams.get('crmRoute');
+  const path =
+    url.pathname === '/api/executive' && ['targets', 'equivalences'].includes(crmRoute)
+      ? `/api/commercial/${crmRoute}`
+      : url.pathname;
   if (path === '/api/auth/login' && req.method === 'POST') {
     const body = await requestBody(req);
     const users = await supabase(

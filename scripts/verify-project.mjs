@@ -47,10 +47,6 @@ for (const relativePath of [
   'supabase/005_product_equivalences.sql',
   'server/sales-targets.js',
   'server/product-equivalences.js',
-  'api/commercial/targets.js',
-  'api/commercial/equivalences.js',
-  'frontend-vercel/api/commercial/targets.js',
-  'frontend-vercel/api/commercial/equivalences.js',
   'frontend-vercel/api/falco/documento.js',
   'api/falco/documento.js',
   'api/falco/busca.js',
@@ -61,6 +57,14 @@ for (const relativePath of [
   'frontend-vercel/api/users/[id].js'
 ]) {
   await requireFile(relativePath);
+}
+
+for (const apiRoot of ['api', 'frontend-vercel/api']) {
+  const functions = (await listFiles(resolve(root, apiRoot))).filter((file) =>
+    file.endsWith('.js')
+  );
+  if (functions.length > 12)
+    throw new Error(`${apiRoot} excede o limite de 12 funções do plano Vercel Hobby.`);
 }
 
 for (const directory of reservedPublicDirectories) {
