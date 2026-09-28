@@ -1052,17 +1052,19 @@ function incomingDocuments() {
         ? row.fiscalOperation?.type === 'return'
         : operation === 'vinculada'
           ? Boolean(row.saleReference)
-          : row.fiscalOperation?.type !== 'return')
+          : operation === 'compra'
+            ? row.full && row.fiscalOperation?.type === 'sale'
+            : row.fiscalOperation?.type !== 'return')
   );
   $('#page').innerHTML =
     head(
       'NF-e recebidas',
-      'Documentos distribuídos pela SEFAZ para os CNPJs do grupo.',
+      'Documentos distribuídos pela SEFAZ e XMLs de entrada importados pelo Falco.',
       'MaxCompany / Documentos'
     ) +
-    `<div class="nfe-source"><span class="nfe-live">Fonte: distribuição DF-e</span><span>${data.sourcesAvailable}/${data.sourcesTotal} empresas consultadas</span></div>` +
+    `<div class="nfe-source"><span class="nfe-live">Fonte: SEFAZ e importações do Falco</span><span>${data.sourcesAvailable}/${data.sourcesTotal} empresas consultadas</span></div>` +
     `<section class="kpis">${kpi('NF-e', num(data.invoiceCount), 'No período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e tributos', 'box')}${data.summaryOnlyCount ? kpi('Resumos', num(data.summaryOnlyCount), 'Sem itens detalhados', 'target') : ''}</section>` +
-    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir o documento recebido')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todas as entradas</option><option value="devolucao">Devoluções recebidas</option><option value="vinculada">Devoluções ligadas a venda</option><option value="demais">Demais entradas</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'entrada')}</article>`;
+    `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir o documento recebido')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Todas as entradas</option><option value="compra">Compras identificadas</option><option value="devolucao">Devoluções recebidas</option><option value="vinculada">Devoluções ligadas a venda</option><option value="demais">Demais entradas</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'entrada')}</article>`;
   $('#operation-filter').value = operation;
   $('#operation-filter').onchange = (event) =>
     go('recebidas', { operacao: event.target.value === 'todos' ? null : event.target.value });
@@ -1261,7 +1263,28 @@ function nfeFiscal() {
 }
 function incomingDashboard() {
   const data = state.incomingData;
-  const rows = data.daily;
+  const purchases = data.documents.filter(
+    (row) => row.full && row.fiscalOperation?.type === 'sale'
+  );
+  const aggregate = (key) => {
+    const groups = new Map();
+    for (const row of purchases) {
+      const name = key(row);
+      const group = groups.get(name) || { name, count: 0, value: 0 };
+      group.count++;
+      group.value += Number(row.value) || 0;
+      groups.set(name, group);
+    }
+    return [...groups.values()].sort((a, b) => b.value - a.value);
+  };
+  const byDate = new Map(aggregate((row) => row.date).map((row) => [row.name, row]));
+  const rows = data.daily.map((row) => ({
+    ...row,
+    count: byDate.get(row.date)?.count || 0,
+    value: byDate.get(row.date)?.value || 0
+  }));
+  const companies = aggregate((row) => row.company);
+  const suppliers = aggregate((row) => row.supplier?.name || 'Fornecedor não identificado');
   const max = Math.max(1, ...rows.map((row) => row.value));
   const x = (index) => 52 + (index / Math.max(rows.length - 1, 1)) * 626;
   const y = (value) => 190 - (value / max) * 160;
@@ -1271,26 +1294,28 @@ function incomingDashboard() {
   const ticks = rows.length
     ? [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])]
     : [];
-  const companyMax = Math.max(1, ...data.companies.map((row) => row.value));
-  const lastSync = data.sync
-    .map((row) => row.updatedAt)
-    .filter(Boolean)
-    .sort()
-    .at(-1);
+  const companyMax = Math.max(1, ...companies.map((row) => row.value));
+  const lastSync =
+    data.lastSyncedAt ||
+    data.sync
+      .map((row) => row.updatedAt)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
   $('#page').innerHTML =
     head(
-      'NF-e recebidas na SEFAZ',
-      'Documentos emitidos por fornecedores contra as empresas do grupo.',
+      'Compras documentadas',
+      'NF-e de fornecedores com CFOP de venda, separadas das demais entradas.',
       'MaxCompany / Entradas'
     ) +
-    `<div class="nfe-source"><span class="nfe-live">Fonte: distribuição DF-e da SEFAZ</span><span>${data.sourcesAvailable} de ${data.sourcesTotal} ${data.sourcesTotal === 1 ? 'empresa' : 'empresas'} · Última consulta ${lastSync ? new Date(lastSync).toLocaleString('pt-BR') : 'ainda não realizada'}</span></div>` +
+    `<div class="nfe-source"><span class="nfe-live">Fonte: SEFAZ e XMLs importados do Falco</span><span>${data.sourcesAvailable} de ${data.sourcesTotal} ${data.sourcesTotal === 1 ? 'empresa' : 'empresas'} · Última atualização registrada ${lastSync ? new Date(lastSync).toLocaleString('pt-BR') : 'ainda não realizada'}</span></div>` +
     ((data.sync || []).some((row) => row.error)
       ? '<div class="notice">A consulta automática SEFAZ está indisponível em uma ou mais empresas. O coletor precisa executar na conta Windows com os certificados empresariais válidos. Os dados já sincronizados permanecem disponíveis.</div>'
       : '') +
-    `<section class="kpis">${kpi('Valor das entradas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('NF-e recebidas', num(data.invoiceCount), 'No período selecionado', 'document')}${kpi('XML completo', num(data.fullXmlCount), 'Documentos disponíveis integralmente', 'box')}${kpi('Somente resumo', num(data.summaryOnlyCount), 'Sem itens detalhados', 'target')}</section>` +
-    `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Entradas por dia', 'Valor das NF-e destinadas às empresas')}${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor diário das NF-e recebidas">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(max * part)}" y2="${y(max * part)}" stroke="#e4e5e9"/><text x="44" y="${y(max * part) + 4}" text-anchor="end">${short(max * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row.value)}" r="3" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} notas</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem documentos no período.')}</article><article class="panel nfe-companies">${panelHead('Por empresa destinatária', 'Valor das NF-e recebidas')}${data.companies.length ? data.companies.map((row) => `<div class="nfe-company"><div><strong>${esc(row.name)}</strong><span>${num(row.count)} notas · ${money(row.value)}</span></div><div class="nfe-bar"><span style="width:${(row.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma NF-e recebida no período.')}</article></div>` +
-    `<div class="nfe-charts nfe-products-row">${nfeRanking('Principais fornecedores emitentes', 'Valor total dos documentos recebidos', data.suppliers, false, 12)}</div>` +
-    `<p class="nfe-note">Estas são entradas/compras documentadas na SEFAZ, não faturamento de vendas. Resumos e XMLs completos são deduplicados pela chave da NF-e; cancelamentos identificados são excluídos. A SEFAZ pode liberar o XML completo apenas após manifestação do destinatário. ${link('dashboard', 'Ver visão executiva do grupo')}</p>`;
+    `<section class="kpis">${kpi('Compras identificadas', bigMoney(data.purchaseValue || 0), `${num(data.purchaseCount || 0)} NF-e com CFOP de venda`, 'wallet', true, href('recebidas', { operacao: 'compra' }))}${kpi('Todas as entradas', bigMoney(data.value), `${num(data.invoiceCount)} NF-e no período`, 'document', false, 'recebidas')}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e classificação fiscal', 'box')}${kpi('Somente resumo', num(data.summaryOnlyCount), 'Sem itens para confirmar compra', 'target')}</section>` +
+    `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Compras por dia', 'Valor das NF-e classificadas como compra')}${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor diário das compras identificadas">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(max * part)}" y2="${y(max * part)}" stroke="#e4e5e9"/><text x="44" y="${y(max * part) + 4}" text-anchor="end">${short(max * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row.value)}" r="3" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} compras</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem compras identificadas no período.')}</article><article class="panel nfe-companies">${panelHead('Compras por empresa', 'Valor das NF-e de compra')}${companies.length ? companies.map((row) => `<div class="nfe-company"><div><strong>${esc(row.name)}</strong><span>${num(row.count)} notas · ${money(row.value)}</span></div><div class="nfe-bar"><span style="width:${(row.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma compra identificada no período.')}</article></div>` +
+    `<div class="nfe-charts nfe-products-row">${nfeRanking('Fornecedores de compras', 'NF-e com CFOP de venda do fornecedor', suppliers, false, 12)}</div>` +
+    `<p class="nfe-note">Compra identificada exige XML completo, autorizado e CFOP de venda do fornecedor. Devoluções, remessas e outras entradas ficam fora desse valor; resumos sem itens continuam no total de entradas até haver classificação. XMLs repetidos são deduplicados por empresa e chave da NF-e. Compra documentada não é custo da mercadoria vendida nem comprova giro ou Mk.B %. ${link('dashboard', 'Ver visão executiva do grupo')}</p>`;
 }
 function nfeDashboard() {
   const data = state.nfeData;

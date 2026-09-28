@@ -196,7 +196,13 @@ export function mergeArtifactQueue(outgoing, incoming, state) {
       if (!eligibleArtifact(row, direction)) continue;
       const id = artifactPaths(row, direction).id;
       if (!state.completedDocuments?.[id])
-        queue.set(id, { company: row.company, key: row.key, full: row.full, direction });
+        queue.set(id, {
+          company: row.company,
+          key: row.key,
+          full: row.full,
+          direction,
+          priority: row.source === 'falco-import'
+        });
     }
   }
   return [...queue.values()].filter(
@@ -271,12 +277,14 @@ export function selectArtifactBatch(outgoing, incoming, state, limit, now = Date
         !state.completedDocuments?.[artifactPaths(row, 'outgoing').id] &&
         retryReady(state, artifactPaths(row, 'outgoing').id, now)
     ),
-    incoming.filter(
-      (row) =>
-        eligibleArtifact(row, 'incoming') &&
-        !state.completedDocuments?.[artifactPaths(row, 'incoming').id] &&
-        retryReady(state, artifactPaths(row, 'incoming').id, now)
-    )
+    incoming
+      .filter(
+        (row) =>
+          eligibleArtifact(row, 'incoming') &&
+          !state.completedDocuments?.[artifactPaths(row, 'incoming').id] &&
+          retryReady(state, artifactPaths(row, 'incoming').id, now)
+      )
+      .sort((a, b) => Number(Boolean(b.priority)) - Number(Boolean(a.priority)))
   ];
   const selected = [];
   for (let index = 0; selected.length < limit && queues.some((queue) => queue.length); index++) {

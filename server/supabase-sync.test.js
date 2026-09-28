@@ -91,3 +91,19 @@ test('backfill não tenta sincronizar resumo de entrada sem XML completo', () =>
   const row = { company: 'MaxPlast', key: '1'.padStart(44, '0'), full: false };
   assert.deepEqual(selectArtifactBatch([], [row], {}, 10), []);
 });
+
+test('XML de compra importado pelo Falco recebe DANFE antes da fila histórica', () => {
+  const key = (value) => String(value).padStart(44, '0');
+  const rows = [
+    { company: 'MaxPlast', key: key(1), full: true },
+    { company: 'MaxPlast', key: key(2), full: true, source: 'falco-import' }
+  ];
+  const queue = mergeArtifactQueue([], rows, {});
+  const batch = selectArtifactBatch(
+    [],
+    queue.filter((row) => row.direction === 'incoming'),
+    {},
+    1
+  );
+  assert.equal(batch[0].row.key, key(2));
+});

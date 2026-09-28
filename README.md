@@ -19,6 +19,7 @@ Ao abrir sem datas na URL, o CRM mostra o mês atual. Selecionar empresa, perío
 - Navegação conectada: empresa → grupo de clientes → CNPJs/cadastros → vendedores → NF-e; cada clique mantém o período e os filtros na URL. A nota abre seus itens, tributos, frete, XML e DANFE quando existe na pasta da empresa. O Falco nomeia os PDFs por prefixo da empresa (01/03/05/06), que pode diferir da série informada no XML.
 - Faturamento documentado, médias por período, projeção do mês, fretes e impostos destacados nos XMLs. Médias e projeções são cálculos do CRM sobre NF-e autorizadas, não valores conciliados do ERP.
 - Entradas: NF-e emitidas por fornecedores contra as quatro empresas, consultadas pelo serviço oficial de distribuição DF-e da SEFAZ. Mostra valor diário, empresas, fornecedores e cobertura dos XMLs completos. São compras/entradas, não faturamento de vendas.
+- Compras: a aba **Compras e entradas** separa NF-e completas com CFOP de venda do fornecedor do total de entradas. Lê também, sem copiar arquivos, os XMLs e PDFs em `\\maxcompany\DEPLOY\NotasFiscaisEntradaImportacaoXML\Identificado` e `NaoIdentificado`. Documentos da SEFAZ e do Falco são deduplicados por empresa e chave. `FALCO_INCOMING_XML_PATH` permite apontar outro diretório de importação. Resumos sem itens, devoluções e remessas não são promovidos a compras confirmadas.
 - Fiscal: distribuição das NF-e de saída por UF do destinatário e CFOP dos itens.
 - Impostos: valores destacados nos XMLs de saída e entrada, separados por empresa, além de regime tributário CRT das NF-e e eventual `vCredICMSSN` informado ao comprador pelas empresas do Simples. Os XMLs não comprovam crédito efetivamente apropriado; a pasta `SPED` examinada não contém apuração para esse cálculo. Não use tributo destacado como crédito tomado.
 - A aba de catálogo dos relatórios do Falco está temporariamente oculta para todos os perfis; seu endereço antigo redireciona para o dashboard ou para as NF-e emitidas no perfil fiscal.
@@ -32,6 +33,8 @@ O valor de **Vendas faturadas** soma somente NF-e de venda autorizadas e não ca
 ## Fontes examinadas
 
 Em `\\maxcompany\DEPLOY\BACKUP\BANCO_DE_DADOS` há backups `MASERP.bak`. Eles contêm a base do SQL Server, mas não são tabelas consultáveis diretamente como arquivos e não são uma fonte em tempo real. `\\maxcompany\DEPLOY HOMOLOGACAO` contém uma cópia de homologação menos atual. O dashboard usa os XMLs de produção atualizados nas pastas.
+
+Em 28/09/2026, a pasta de importação de entrada de produção continha dois XMLs completos de compras da MaxPlast (abril e maio de 2026), com PDFs correspondentes; a pasta equivalente de homologação não continha XMLs. O acervo da SEFAZ tinha mais documentos, mas estava em outra pasta local de coleta. A faixa do Falco com **Vendas / Faturamento / Com Giro / Sem Giro / Mk.B %** não pode ser reproduzida integralmente a partir desses arquivos: NF-e de saída mede faturamento documentado, enquanto pedidos, giro de estoque e margem/markup do ERP exigem outras fontes. O CRM não usa o valor de compra da NF-e como custo da unidade vendida.
 
 ## Verificar
 

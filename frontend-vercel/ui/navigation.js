@@ -6,7 +6,7 @@ export const viewLabels = {
   faturamento: 'Faturamento',
   devolucoes: 'Devoluções',
   emitidas: 'NF-e emitidas',
-  entradas: 'Entradas da SEFAZ',
+  entradas: 'Compras e entradas',
   recebidas: 'NF-e recebidas',
   fretes: 'Fretes',
   impostos: 'Impostos destacados',

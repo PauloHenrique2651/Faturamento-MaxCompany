@@ -394,6 +394,9 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
     Object.assign(result, fiscalBreakdown(documents, series, scope));
   } else {
     result.suppliers = ranked(parties);
+    const purchases = documents.filter((row) => row.full && row.fiscalOperation?.type === 'sale');
+    result.purchaseCount = purchases.length;
+    result.purchaseValue = money(purchases.reduce((sum, row) => sum + amount(row), 0));
     const returnDocuments = documents.filter((row) => row.fiscalOperation?.type === 'return');
     const linkedReturns = returnDocuments.filter((row) => row.saleReference);
     result.returns = {

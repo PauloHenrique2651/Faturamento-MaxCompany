@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { XMLParser } from 'fast-xml-parser';
@@ -10,11 +10,13 @@ import { findOutgoingSalesByKeys } from './nfe-files.js';
 const root =
   process.env.SEFAZ_DATA_PATH ||
   join(fileURLToPath(new URL('..', import.meta.url)), 'data', 'sefaz');
+const falcoImportRoot =
+  process.env.FALCO_INCOMING_XML_PATH || '\\\\maxcompany\\DEPLOY\\NotasFiscaisEntradaImportacaoXML';
 const companies = [
-  [1, 'MaxPlast', '0170'],
-  [2, 'MaxSafety', '0141'],
-  [3, 'MaxSupply', '0145'],
-  [4, 'MaxSupply · Filial ES', '0226']
+  [1, 'MaxPlast', '0170', '09562800000170'],
+  [2, 'MaxSafety', '0141', '16851383000141'],
+  [3, 'MaxSupply', '0145', '52748863000145'],
+  [4, 'MaxSupply · Filial ES', '0226', '52748863000226']
 ];
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -24,6 +26,46 @@ const parser = new XMLParser({
 const cache = new Map();
 const money = (amount) => Math.round(amount * 100) / 100;
 const validKey = (key) => /^\d{44}$/.test(key);
+let importCatalog = { checkedAt: 0, files: [] };
+
+async function importedFiles() {
+  if (Date.now() - importCatalog.checkedAt < 10000) return importCatalog.files;
+  const files = [];
+  for (const subfolder of ['Identificado', 'NaoIdentificado']) {
+    const folder = join(falcoImportRoot, subfolder);
+    let names;
+    try {
+      names = await readdir(folder);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!/^\d{44}\.xml$/i.test(name)) continue;
+      const path = join(folder, name);
+      try {
+        const xml = await readFile(path, 'utf8');
+        const document = parser.parse(xml);
+        const companyCnpj = String(document.nfeProc?.NFe?.infNFe?.dest?.CNPJ || '');
+        const company = companies.find(([, , , cnpj]) => cnpj === companyCnpj);
+        const row = company ? parseSefazDocument(xml, companyCnpj) : null;
+        if (row?.kind === 'invoice' && row.full && row.key === name.slice(0, 44))
+          files.push({
+            path,
+            companyCnpj,
+            company: company[1],
+            id: company[0],
+            companyId: company[0],
+            key: row.key,
+            source: 'falco-import'
+          });
+      } catch {
+        // A importação ainda pode estar sendo gravada; a próxima consulta tentará novamente.
+      }
+    }
+  }
+  importCatalog = { checkedAt: Date.now(), files };
+  return files;
+}
 
 export async function readIncomingSyncStatus() {
   let directories = [];
@@ -66,26 +108,44 @@ export async function readIncomingDocument(companyId, key) {
   if (!validKey(key)) return null;
   const config = companies.find(([id]) => id === companyId);
   if (!config) return null;
-  const [, , suffix] = config;
+  const [, , suffix, companyCnpj] = config;
   let directory;
   try {
     directory = (await readdir(root, { withFileTypes: true })).find(
       (entry) => entry.isDirectory() && entry.name.endsWith(suffix)
     );
   } catch {
-    return null;
+    directory = null;
   }
-  if (!directory) return null;
-  const folder = join(root, directory.name);
-  const names = (await readdir(folder)).filter((name) => /^nsu-\d{15}-.*\.xml$/i.test(name));
-  const rows = await mapLimited(names, 16, async (name) => {
-    const path = join(folder, name);
-    const row = await parsedFile(path, directory.name);
-    return row?.kind === 'invoice' && row.key === key ? { row, path } : null;
-  });
-  const match = rows.filter(Boolean).sort((a, b) => Number(b.row.full) - Number(a.row.full))[0];
+  let match = null;
+  if (directory) {
+    const folder = join(root, directory.name);
+    const names = (await readdir(folder)).filter((name) => /^nsu-\d{15}-.*\.xml$/i.test(name));
+    const rows = await mapLimited(names, 16, async (name) => {
+      const path = join(folder, name);
+      const row = await parsedFile(path, directory.name);
+      return row?.kind === 'invoice' && row.key === key ? { row, path } : null;
+    });
+    match = rows.filter(Boolean).sort((a, b) => Number(b.row.full) - Number(a.row.full))[0];
+  }
+  const imported = (await importedFiles()).find(
+    (file) => file.companyCnpj === companyCnpj && file.key === key
+  );
+  if (imported && !match?.row.full) {
+    const row = await parsedFile(imported.path, companyCnpj);
+    if (row?.kind === 'invoice' && row.key === key) match = { row, path: imported.path };
+  }
   if (!match) return null;
-  return { row: match.row, xml: await readFile(match.path, 'utf8') };
+  let pdfPath = null;
+  if (imported) {
+    const path = imported.path.replace(/\.xml$/i, '.pdf');
+    try {
+      if ((await stat(path)).isFile()) pdfPath = path;
+    } catch {
+      // O DANFE pode não existir junto com o XML importado.
+    }
+  }
+  return { row: match.row, xml: await readFile(match.path, 'utf8'), pdfPath };
 }
 
 export function parseSefazDocument(xml, companyCnpj) {
@@ -210,6 +270,7 @@ async function fullSearchCatalog() {
             files.push({ path: join(folder, name), companyCnpj: directory.name, company, id });
         }
       }
+      files.push(...(await importedFiles()));
       const parsed = await mapLimited(files, 16, (file) => parsedFile(file.path, file.companyCnpj));
       const invoices = new Map();
       const canceled = new Set();
@@ -228,6 +289,7 @@ async function fullSearchCatalog() {
             ...row,
             company: file.company,
             companyId: file.id,
+            source: file.source || 'sefaz',
             canceled: row.canceled || existing?.canceled || false
           });
         else if (row.canceled) existing.canceled = true;
@@ -312,6 +374,9 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
       nextAllowedAt: state.NextAllowedAt || null
     });
   }
+  files.push(
+    ...(await importedFiles()).filter((file) => companyId === null || file.companyId === companyId)
+  );
   const parsed = await mapLimited(files, 16, (file) => parsedFile(file.path, file.companyCnpj));
   const canceled = new Set();
   const invoices = new Map();
@@ -326,7 +391,12 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
     }
     const existing = invoices.get(id);
     if (!existing || (row.full && !existing.full))
-      invoices.set(id, { ...row, company, canceled: row.canceled || existing?.canceled || false });
+      invoices.set(id, {
+        ...row,
+        company,
+        source: files[index].source || 'sefaz',
+        canceled: row.canceled || existing?.canceled || false
+      });
     else if (row.canceled) existing.canceled = true;
   }
   const daily = new Map();
@@ -340,6 +410,8 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
   let canceledCount = 0;
   let amount = 0;
   let count = 0;
+  let purchaseCount = 0;
+  let purchaseValue = 0;
   const returns = [];
   for (const [id, row] of invoices) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date) || row.date < inicio || row.date > fim) continue;
@@ -349,6 +421,10 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
     }
     count++;
     amount += row.amount;
+    if (row.full && row.fiscalOperation?.type === 'sale') {
+      purchaseCount++;
+      purchaseValue += row.amount;
+    }
     if (row.fiscalOperation?.type === 'return') returns.push(row);
     if (row.full) fullXmlCount++;
     if (row.full) {
@@ -359,6 +435,7 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
     documents.push({
       key: row.key,
       company: row.company,
+      source: row.source,
       date: row.date,
       number: row.number,
       series: row.series,
@@ -427,6 +504,8 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
     period: { inicio, fim },
     invoiceCount: count,
     value: money(amount),
+    purchaseCount,
+    purchaseValue: money(purchaseValue),
     returns: {
       value: money(returns.reduce((sum, row) => sum + row.amount, 0)),
       count: returns.length,

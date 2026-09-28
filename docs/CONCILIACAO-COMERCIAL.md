@@ -2,6 +2,8 @@
 
 O Falco permanece somente leitura. XMLs de saída vêm das pastas de NF-e; entradas vêm da distribuição DF-e da SEFAZ sincronizada pelo coletor. Metas e equivalências são gravadas exclusivamente no Supabase do CRM (`sales_targets` e `product_equivalences`).
 
+O coletor também lê diretamente `NotasFiscaisEntradaImportacaoXML/Identificado` e `NaoIdentificado` em produção, aproveitando os PDFs ao lado dos XMLs. Chave e CNPJ destinatário são validados; a mesma entrada presente na SEFAZ e no Falco conta uma única vez. **Compra identificada** é uma NF-e completa, autorizada, não cancelada e classificada como venda pelo CFOP do fornecedor. Todas as demais naturezas e resumos sem itens permanecem em entradas, fora do valor de compras identificado.
+
 ## Indicadores do mostrador
 
 - **Vendas faturadas:** soma de `vNF` das saídas autorizadas, não canceladas e classificadas como venda por CFOP/natureza. Emissão de devolução a fornecedor, retorno de industrialização, remessa, bonificação e transferência não é venda.
