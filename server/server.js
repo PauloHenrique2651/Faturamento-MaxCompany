@@ -16,6 +16,9 @@ import {
 import { searchQuery } from './nfe-search.js';
 import { renderDanfe } from './danfe.js';
 import { readSupabaseSyncStatus, syncSupabaseFromFalco } from './supabase-sync.js';
+import { crmCloudRequest } from './crm-store.js';
+import { salesTargetsRoute } from './sales-targets.js';
+import { equivalencesRoute } from './product-equivalences.js';
 import {
   authenticate,
   createUser,
@@ -438,6 +441,26 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: error.message });
         }
         return json(res, 405, { error: 'Método inválido' });
+      }
+      if (url.pathname === '/api/commercial/targets') {
+        const result = await salesTargetsRoute({
+          url,
+          method: req.method,
+          body,
+          user,
+          request: crmCloudRequest
+        });
+        return json(res, result.status, result.body);
+      }
+      if (url.pathname === '/api/commercial/equivalences') {
+        const result = await equivalencesRoute({
+          url,
+          method: req.method,
+          body,
+          user,
+          request: crmCloudRequest
+        });
+        return json(res, result.status, result.body);
       }
       if (
         user.role === 'fiscal' &&

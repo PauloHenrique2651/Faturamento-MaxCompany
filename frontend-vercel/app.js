@@ -21,6 +21,9 @@ import { navigationSections as sections, viewLabels as views } from './ui/naviga
 import { legacyViews, readSnapshot, saveSnapshot, state } from './state.js';
 import { reports, reportGroups } from './report-catalog.js';
 import { cfopCatalog, cfopDescription } from './lib/cfop-catalog.js';
+import { renderMostrador } from './mostrador.js';
+import { displayPeriod } from './lib/commercial-performance.js';
+import { purchaseSuggestions, reconcilePurchases } from './lib/purchase-match.js';
 function href(view, changes = {}) {
   const p = new URLSearchParams(state.params);
   if (view !== 'busca') {
@@ -751,10 +754,94 @@ function revenueDashboard() {
     `<div class="revenue-equation"><span>${money(data.saleValue)} <small>vendas faturadas</small></span><b>−</b><span>${money(returned)} <small>devoluções ligadas à venda</small></span><b>=</b><strong>${money(net)}</strong></div>` +
     `<div class="notice">Do total emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores e ${money(Math.max(0, data.value - data.saleValue - data.returns.value))} são outras operações ou operações mistas. Essas saídas não reduzem as vendas acima. ${num((received?.count || 0) - (received?.linkedToSaleCount || 0))} devoluções recebidas não têm vínculo confirmado com venda; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${reconciliationPanel(data)}${coveragePanel(data)}</div>` +
+    purchaseMatchPanel(data, state.purchaseHistory) +
     `<div class="nfe-charts nfe-charts-secondary">${averagePanel({ ...data, value: data.saleValue })}${forecastPanel(month ? { ...month, value: month.saleValue } : null, state.previousMonthData ? { ...state.previousMonthData, value: state.previousMonthData.saleValue } : null, state.monthIncomingData?.returns?.linkedToSaleValue ?? null)}</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendedores', 'Valor das NF-e atribuído no XML', data.sellers, false, 12, 'seller')}${nfeRanking('Grupos de clientes', 'Valor consolidado dos CNPJs', data.customerGroups, false, 12, 'customerGroup')}</div>` +
     `<article class="panel analytic-panel">${panelHead('Composição documentada', 'Valores informados no total da NF-e')}${metricPanel('Descontos', data.discountValue, 'vDesc dos XMLs')}${metricPanel('Frete destacado', data.freightValue, 'vFrete dos XMLs')}${metricPanel('Ticket médio por NF-e', data.invoiceCount ? data.value / data.invoiceCount : 0, 'Valor total ÷ NF-e')}</article>` +
     `<p class="nfe-note">A venda é identificada pelos CFOPs dos itens da NF-e inteira. O saldo usa somente devoluções recebidas com referência a uma venda autorizada da mesma empresa e do mesmo CNPJ. Notas sem vínculo, ajustes, custos, lucro, margem, markup e impostos efetivamente pagos dependem de conciliação adicional.</p>`;
+}
+function purchaseMatchPanel(outgoing, incoming) {
+  if (!incoming)
+    return `<article class="panel purchase-match"><h2>Entradas × saídas</h2><p>Histórico de compras temporariamente indisponível. Nenhum custo foi estimado.</p></article>`;
+  const result = reconcilePurchases(outgoing, incoming, { equivalences: state.equivalences });
+  const suggestions = purchaseSuggestions(outgoing, incoming, state.equivalences);
+  const ids = {
+    MaxPlast: 1,
+    MaxSafety: 2,
+    MaxSupply: 3,
+    'MaxSupply - Filial ES': 4,
+    'MaxSupply · Filial ES': 4
+  };
+  const open = (row, type, key) =>
+    `<button type="button" class="text-button" data-invoice="${esc(key)}" data-invoice-type="${type}" data-invoice-company="${row.saleCompanyId || ids[row.saleCompany] || ''}">Abrir NF-e</button>`;
+  return `<article class="panel purchase-match">${panelHead('Entradas × saídas', 'Preço de compra documentado confrontado com itens vendidos no mesmo CNPJ')}
+    <div class="purchase-match-stats"><div><span>Itens vendidos</span><strong>${num(result.saleLines)}</strong></div><div><span>Correspondência comprovável</span><strong>${num(result.matchedLines)}</strong><small>${result.saleLines ? num((result.matchedLines / result.saleLines) * 100) : '0'}% dos itens</small></div><div><span>Sem correspondência</span><strong>${num(result.unmatchedLines)}</strong></div><div><span>Compra mais recente com preços divergentes</span><strong>${num(result.ambiguousLines)}</strong></div></div>
+    <div class="purchase-match-note"><strong>Diferença parcial entre venda e última compra: ${result.matchedLines ? money(result.difference) : 'Não calculável'}</strong><p>Somente ${money(result.matchedSaleValue)} em itens vendidos tiveram correspondência; preço de referência de compra ${money(result.purchaseReferenceValue)}. Isto não é lucro, custo de estoque nem margem contábil. Não inclui frete, tributos recuperáveis, despesas, descontos fora do item ou lote efetivamente baixado.</p></div>
+    ${
+      result.matches.length
+        ? `<div class="purchase-match-table"><table><thead><tr><th>Produto vendido</th><th>Venda</th><th>Compra de referência</th><th>Critério</th><th>Documentos</th></tr></thead><tbody>${result.matches
+            .slice(0, 50)
+            .map(
+              (row) =>
+                `<tr><td><strong>${esc(row.itemName)}</strong><small>${esc(row.ncm)} · ${num(row.quantity)} ${esc(row.unit)}</small></td><td>${money(row.saleValue)}<small>${date(row.saleDate)}</small></td><td>${money(row.purchaseReferenceValue)}<small>${date(row.purchaseDate)} · ${esc(row.supplier)}</small></td><td>${esc(row.basis)}</td><td>${open(row, 'saida', row.saleKey)}<button type="button" class="text-button" data-invoice="${esc(row.purchaseKey)}" data-invoice-type="entrada" data-invoice-company="${ids[row.saleCompany] || ''}">Abrir compra</button></td></tr>`
+            )
+            .join('')}</tbody></table></div>`
+        : '<p>Não há itens com chave de produto compatível entre as compras e vendas deste recorte.</p>'
+    }
+    <h3>Possíveis equivalências para validar</h3><p>Descrições parecidas são sugestões e ficam fora do cálculo até aprovação. Empresa, NCM e unidade já coincidem.</p>${
+      suggestions.length
+        ? `<div class="purchase-match-table"><table><thead><tr><th>Produto na saída</th><th>Produto na entrada</th><th>Semelhança</th><th>Ação</th></tr></thead><tbody>${suggestions
+            .slice(0, 20)
+            .map(({ sale, item, purchase, purchaseItem, score }) => {
+              const body = {
+                companyId: Number(sale.companyId) || ids[sale.company],
+                saleCode: item.code,
+                saleName: item.name,
+                supplierId: purchase.supplier?.id,
+                purchaseCode: purchaseItem.code,
+                purchaseName: purchaseItem.name,
+                ncm: item.ncm,
+                unit: item.unit
+              };
+              return `<tr><td><strong>${esc(item.name)}</strong><small>Código ${esc(item.code)} · NCM ${esc(item.ncm)} · ${esc(item.unit)}</small></td><td><strong>${esc(purchaseItem.name)}</strong><small>${esc(purchase.supplier?.name)} · Código ${esc(purchaseItem.code)} · ${date(purchase.date)}</small></td><td>${num(score * 100)}%</td><td><button type="button" class="button quiet" data-equivalence='${esc(JSON.stringify(body))}'>Aprovar equivalência</button></td></tr>`;
+            })
+            .join('')}</tbody></table></div>`
+        : '<p>Nenhuma sugestão suficientemente próxima neste período.</p>'
+    }
+    ${state.equivalences.length ? `<details class="purchase-approved"><summary>Equivalências aprovadas (${num(state.equivalences.length)})</summary><div class="purchase-match-table"><table><thead><tr><th>Produto de saída</th><th>Produto de entrada</th><th>NCM / unidade</th><th></th></tr></thead><tbody>${state.equivalences.map((row) => `<tr><td>${esc(row.sale_name)}<small>${esc(row.sale_code)}</small></td><td>${esc(row.purchase_name)}<small>${esc(row.purchase_code)} · fornecedor ${esc(row.purchase_supplier_id)}</small></td><td>${esc(row.ncm)} · ${esc(row.unit)}</td><td><button type="button" class="text-button" data-equivalence-delete="${esc(row.id)}">Revogar</button></td></tr>`).join('')}</tbody></table></div></details>` : ''}
+    <p class="nfe-note">A correspondência exige mesma empresa, GTIN informado, descrição exata ou equivalência aprovada, NCM, unidade e compra anterior à venda nos últimos 365 dias. Devoluções, remessas e XMLs apenas resumidos não entram como compras. O código do produto do fornecedor não é considerado igual ao código interno sem aprovação.</p></article>`;
+}
+async function loadPurchaseHistory(params) {
+  const start = params.get('inicio') || `${today().slice(0, 7)}-01`;
+  const end = params.get('fim') || today();
+  const from = new Date(Date.parse(`${start}T12:00:00Z`) - 365 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  const query = new URLSearchParams({ inicio: from, fim: end });
+  if (params.get('empresa')) query.set('empresa', params.get('empresa'));
+  const scope = query.toString();
+  if (state.purchaseHistoryScope === scope && Date.now() - state.purchaseHistoryAt < 120000)
+    return state.purchaseHistory;
+  try {
+    const history = await fetchJson(`/api/falco/entradas?${query}`);
+    state.purchaseHistory = history;
+    state.purchaseHistoryScope = scope;
+    state.purchaseHistoryAt = Date.now();
+    return history;
+  } catch {
+    state.purchaseHistory = null;
+    return null;
+  }
+}
+async function loadEquivalences() {
+  if (Date.now() - state.equivalencesAt < 120000) return state.equivalences;
+  try {
+    state.equivalences = await fetchJson('/api/commercial/equivalences');
+    state.equivalencesAt = Date.now();
+  } catch {
+    state.equivalences = [];
+  }
+  return state.equivalences;
 }
 function returnsDashboard() {
   const outgoing = state.nfeData;
@@ -1011,6 +1098,36 @@ function render() {
   else if (state.view === 'insights') insights();
   else listings();
 }
+function paintMostrador() {
+  const result = renderMostrador(state.nfeData, state.incomingData, state.targets, state.params, {
+    slide: state.mostradorSlide,
+    paused: state.mostradorPaused,
+    sort: state.mostradorSort
+  });
+  if (result.signature !== state.mostradorSignature) {
+    $('#page').innerHTML = result.html;
+    state.mostradorSignature = result.signature;
+  }
+  const clock = $('#display-clock');
+  if (clock)
+    clock.textContent = new Date().toLocaleTimeString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+}
+function metasPage() {
+  const kindLabel = { month: 'Mensal', quarter: 'Trimestral', year: 'Anual' };
+  const scopeLabel = { group: 'Grupo', company: 'Empresa', seller: 'Vendedor' };
+  const sellers = state.nfeData?.sellers || [];
+  $('#page').innerHTML =
+    head(
+      'Metas comerciais',
+      'Metas gravadas no banco do CRM. O Falco continua somente consulta.',
+      'MaxCompany / Gestão'
+    ) +
+    `<section class="targets-layout"><form id="target-form" class="panel targets-form"><h2>Definir meta</h2><p>Metas mensais prevalecem sobre trimestrais e anuais no mesmo período. A distribuição diária considera segunda a sexta-feira, sem feriados.</p><label>Escopo<select name="scopeType" id="target-scope"><option value="group">Grupo MaxCompany</option><option value="company">Empresa</option><option value="seller">Vendedor</option></select></label><label class="target-entity" id="target-company-field" hidden>Empresa<select name="companyKey"><option value="1">MaxPlast</option><option value="2">MaxSafety</option><option value="3">MaxSupply</option><option value="4">MaxSupply · Filial ES</option></select></label><label class="target-entity" id="target-seller-field" hidden>Vendedor<input name="sellerName" list="target-sellers" placeholder="Nome no XML da NF-e"><datalist id="target-sellers">${sellers.map((row) => `<option value="${esc(row.name)}"></option>`).join('')}</datalist></label><label>Periodicidade<select name="periodKind" id="target-kind"><option value="month">Mensal</option><option value="quarter">Trimestral</option><option value="year">Anual</option></select></label><label>Início<input name="periodStart" id="target-period" type="date" value="${today().slice(0, 7)}-01" required></label><label>Valor da meta (R$)<input name="amount" type="number" min="0" max="999999999999" step="0.01" required></label><p id="target-error" role="alert"></p><button class="button primary" type="submit">Salvar meta</button></form><section class="panel targets-list"><h2>Metas cadastradas</h2><p>Alterações feitas aqui aparecem para toda a equipe autorizada.</p>${state.targets.length ? `<div class="targets-table-wrap"><table><thead><tr><th>Escopo</th><th>Nome</th><th>Período</th><th>Meta</th><th></th></tr></thead><tbody>${state.targets.map((row) => `<tr><td>${scopeLabel[row.scope_type] || ''}</td><td>${esc(row.scope_name)}</td><td>${kindLabel[row.period_kind] || ''} · ${esc(row.period_start)}</td><td>${money(row.amount)}</td><td><button type="button" data-target-delete="${esc(row.id)}" aria-label="Excluir meta de ${esc(row.scope_name)}">Excluir</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><h3>Nenhuma meta cadastrada</h3><p>Cadastre a primeira meta para comparar realizado e projeção.</p></div>'}</section></section>`;
+}
 function reportCatalog() {
   const query = (state.reportSearch || '').trim().toLocaleLowerCase('pt-BR');
   const shown = reports.filter((r) =>
@@ -1230,6 +1347,32 @@ async function load(background = false) {
     $('#page').innerHTML =
       `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Lendo XMLs de NF-e…'}</div>`;
   try {
+    if (['mostrador', 'metas'].includes(state.view)) {
+      const period = displayPeriod(state.params.get('period') || 'month', today());
+      const params = new URLSearchParams(state.params);
+      if (state.view === 'mostrador') {
+        params.set('inicio', period.start);
+        params.set('fim', period.end);
+      }
+      const year = period.start.slice(0, 4);
+      const [outgoing, incoming, targets] = await Promise.all([
+        fetchJson(`/api/falco/nfe?${params}`),
+        state.view === 'mostrador'
+          ? fetchJson(`/api/falco/entradas?${params}`)
+          : Promise.resolve(null),
+        fetchJson(`/api/commercial/targets?start=${year}-01-01&end=${year}-12-31`)
+      ]);
+      if (seq !== state.seq) return;
+      state.nfeData = outgoing;
+      state.incomingData = incoming;
+      state.targets = targets;
+      if (state.view === 'mostrador') paintMostrador();
+      else metasPage();
+      $('#sync-status').textContent =
+        `Dados consultados às ${new Date().toLocaleTimeString('pt-BR')}`;
+      $('#notice').innerHTML = '';
+      return;
+    }
     if (state.view === 'usuarios') {
       const users = await fetchJson('/api/users');
       if (seq !== state.seq) return;
@@ -1296,6 +1439,10 @@ async function load(background = false) {
             ? Promise.resolve(state.incomingData)
             : fetchJson(`/api/falco/entradas?inicio=${monthStart}&fim=${today()}${suffix}`)
         ]);
+        if (seq !== state.seq) return;
+        await loadPurchaseHistory(state.params);
+        if (seq !== state.seq) return;
+        await loadEquivalences();
         if (seq !== state.seq) return;
       }
       if (state.view === 'impostos') {
@@ -1530,6 +1677,12 @@ function route() {
   state.view = views[view] ? view : 'dashboard';
   document.body.dataset.view = state.view;
   state.params = new URLSearchParams(query);
+  if (state.view === 'mostrador') {
+    const period = displayPeriod(state.params.get('period') || 'month', today());
+    state.params.set('inicio', period.start);
+    state.params.set('fim', period.end);
+    state.mostradorSignature = '';
+  }
   if (!state.params.has('fim')) state.params.set('fim', today());
   if (!state.params.has('inicio'))
     state.params.set('inicio', `${state.params.get('fim').slice(0, 7)}-01`);
@@ -1645,6 +1798,92 @@ async function openInvoice(key, type, companyId, canceled = false) {
   $('#detail-dialog').showModal();
 }
 document.addEventListener('click', (e) => {
+  const deleteEquivalence = e.target.closest('[data-equivalence-delete]');
+  if (deleteEquivalence) {
+    deleteEquivalence.disabled = true;
+    sendJson(
+      `/api/commercial/equivalences?id=${encodeURIComponent(deleteEquivalence.dataset.equivalenceDelete)}`,
+      'DELETE'
+    )
+      .then(() => {
+        state.equivalencesAt = 0;
+        load(true);
+      })
+      .catch((error) => {
+        $('#notice').innerHTML = `<div class="notice">${esc(error.message)}</div>`;
+        deleteEquivalence.disabled = false;
+      });
+    return;
+  }
+  const equivalence = e.target.closest('[data-equivalence]');
+  if (equivalence) {
+    equivalence.disabled = true;
+    sendJson('/api/commercial/equivalences', 'POST', JSON.parse(equivalence.dataset.equivalence))
+      .then(() => {
+        state.equivalencesAt = 0;
+        load(true);
+      })
+      .catch((error) => {
+        $('#notice').innerHTML = `<div class="notice">${esc(error.message)}</div>`;
+        equivalence.disabled = false;
+      });
+    return;
+  }
+  const displayCompany = e.target.closest('[data-display-company]');
+  if (displayCompany) {
+    changeCompany(displayCompany.dataset.displayCompany);
+    return;
+  }
+  const displayPeriodButton = e.target.closest('[data-display-period]');
+  if (displayPeriodButton) {
+    const key = displayPeriodButton.dataset.displayPeriod;
+    const period = displayPeriod(key, today());
+    go('mostrador', { period: key, inicio: period.start, fim: period.end });
+    return;
+  }
+  const displaySlide = e.target.closest('[data-display-slide]');
+  const displaySort = e.target.closest('[data-display-sort]');
+  if (displaySort) {
+    state.mostradorSort = displaySort.dataset.displaySort;
+    paintMostrador();
+    return;
+  }
+  if (displaySlide) {
+    state.mostradorSlide = Number(displaySlide.dataset.displaySlide);
+    paintMostrador();
+    return;
+  }
+  if (e.target.closest('[data-display-next], [data-display-prev]')) {
+    state.mostradorSlide =
+      (state.mostradorSlide + (e.target.closest('[data-display-next]') ? 1 : 3)) % 4;
+    paintMostrador();
+    return;
+  }
+  if (e.target.closest('[data-display-pause]')) {
+    state.mostradorPaused = !state.mostradorPaused;
+    paintMostrador();
+    return;
+  }
+  if (e.target.closest('[data-display-fullscreen]')) {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+    return;
+  }
+  const deleteTarget = e.target.closest('[data-target-delete]');
+  if (deleteTarget) {
+    const button = deleteTarget;
+    button.disabled = true;
+    sendJson(
+      `/api/commercial/targets?id=${encodeURIComponent(button.dataset.targetDelete)}`,
+      'DELETE'
+    )
+      .then(() => load(true))
+      .catch((error) => {
+        $('#target-error').textContent = error.message;
+        button.disabled = false;
+      });
+    return;
+  }
   const invoice = e.target.closest('[data-invoice]');
   if (invoice) {
     openInvoice(
@@ -1701,6 +1940,22 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('dialog a')) e.target.closest('dialog').close();
 });
 document.addEventListener('change', (e) => {
+  if (e.target.id === 'target-scope') {
+    $('#target-company-field').hidden = e.target.value !== 'company';
+    $('#target-seller-field').hidden = e.target.value !== 'seller';
+    return;
+  }
+  if (e.target.id === 'target-kind') {
+    const period = $('#target-period');
+    const value = period.value || `${today().slice(0, 7)}-01`;
+    period.value =
+      e.target.value === 'year'
+        ? `${value.slice(0, 4)}-01-01`
+        : e.target.value === 'quarter'
+          ? `${value.slice(0, 4)}-${String(Math.floor((Number(value.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, '0')}-01`
+          : `${value.slice(0, 7)}-01`;
+    return;
+  }
   const input = e.target.closest('[data-rate]');
   if (!input) return;
   try {
@@ -1717,6 +1972,43 @@ document.addEventListener('change', (e) => {
   } catch (error) {
     input.setAttribute('aria-invalid', 'true');
     $('#rate-error').textContent = error.message;
+  }
+});
+document.addEventListener('submit', async (event) => {
+  if (event.target.id !== 'target-form') return;
+  event.preventDefault();
+  const form = event.target;
+  const fields = new FormData(form);
+  const scopeType = fields.get('scopeType');
+  const companyNames = {
+    1: 'MaxPlast',
+    2: 'MaxSafety',
+    3: 'MaxSupply',
+    4: 'MaxSupply · Filial ES'
+  };
+  const sellerName = String(fields.get('sellerName') || '').trim();
+  const companyKey = String(fields.get('companyKey') || '1');
+  const body = {
+    scopeType,
+    scopeKey: scopeType === 'group' ? 'group' : scopeType === 'company' ? companyKey : sellerName,
+    scopeName:
+      scopeType === 'group'
+        ? 'Grupo MaxCompany'
+        : scopeType === 'company'
+          ? companyNames[companyKey]
+          : sellerName,
+    periodKind: fields.get('periodKind'),
+    periodStart: fields.get('periodStart'),
+    amount: fields.get('amount')
+  };
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await sendJson('/api/commercial/targets', 'POST', body);
+    await load(true);
+  } catch (error) {
+    $('#target-error').textContent = error.message;
+    button.disabled = false;
   }
 });
 $('#refresh').innerHTML = icon('refresh');
@@ -1861,7 +2153,19 @@ setInterval(() => {
     !document.hidden &&
     !document.querySelector('dialog[open]') &&
     !['INPUT', 'SELECT'].includes(document.activeElement.tagName) &&
-    !['comissoes', 'usuarios'].includes(state.view)
+    !['comissoes', 'usuarios', 'mostrador', 'metas'].includes(state.view)
   )
     load(true);
 }, 10000);
+setInterval(() => {
+  if (state.view === 'mostrador') paintMostrador();
+}, 1000);
+setInterval(() => {
+  if (state.view === 'mostrador' && !state.mostradorPaused && !document.hidden) {
+    state.mostradorSlide = (state.mostradorSlide + 1) % 4;
+    paintMostrador();
+  }
+}, 15000);
+setInterval(() => {
+  if (state.view === 'mostrador' && !document.hidden && !state.paused) load(true);
+}, 60000);

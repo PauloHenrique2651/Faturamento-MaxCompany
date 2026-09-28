@@ -2,6 +2,8 @@ import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } fr
 import { promisify } from 'node:util';
 import { fiscalBreakdown, scopedDocuments, searchDocuments } from '../lib/cloud-fiscal.js';
 import { classifyFiscalOperation } from '../lib/fiscal-operation.js';
+import { salesTargetsRoute } from '../../server/sales-targets.js';
+import { equivalencesRoute } from '../../server/product-equivalences.js';
 
 const scrypt = promisify(scryptCallback);
 const companies = [
@@ -581,6 +583,26 @@ async function handle(req, res) {
   if (!user) return json(res, 401, { error: 'Sessão expirada. Entre novamente.' });
   if (path === '/api/users' || path.startsWith('/api/users/'))
     return handleUsers(req, res, user, path);
+  if (path === '/api/commercial/targets') {
+    const result = await salesTargetsRoute({
+      url,
+      method: req.method,
+      body: req.method === 'POST' ? await requestBody(req) : {},
+      user,
+      request: supabase
+    });
+    return json(res, result.status, result.body);
+  }
+  if (path === '/api/commercial/equivalences') {
+    const result = await equivalencesRoute({
+      url,
+      method: req.method,
+      body: req.method === 'POST' ? await requestBody(req) : {},
+      user,
+      request: supabase
+    });
+    return json(res, result.status, result.body);
+  }
   if (
     user.role === 'fiscal' &&
     !['/api/falco/nfe', '/api/falco/entradas', '/api/falco/documento', '/api/falco/busca'].includes(

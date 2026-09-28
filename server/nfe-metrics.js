@@ -83,6 +83,7 @@ export function xmlItems(invoice) {
     return {
       line: Number(detail['@_nItem']) || index + 1,
       code: String(product.cProd || ''),
+      gtin: /^\d{8,14}$/.test(String(product.cEAN || '')) ? String(product.cEAN) : '',
       order: String(product.xPed || ''),
       name: String(product.xProd || '').trim(),
       ncm: String(product.NCM || ''),

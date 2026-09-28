@@ -1,6 +1,8 @@
 export const viewLabels = {
   busca: 'Busca global',
   dashboard: 'Executivo',
+  mostrador: 'Mostrador comercial',
+  metas: 'Metas comerciais',
   faturamento: 'Faturamento',
   devolucoes: 'Devoluções',
   emitidas: 'NF-e emitidas',
@@ -20,6 +22,8 @@ export const navigationSections = [
     'Inteligência',
     [
       ['dashboard', 'dashboard'],
+      ['mostrador', 'dashboard'],
+      ['metas', 'trend'],
       ['faturamento', 'trend'],
       ['devolucoes', 'document'],
       ['fretes', 'box'],
