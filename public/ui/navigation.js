@@ -7,6 +7,7 @@ export const viewLabels = {
   dre: 'DRE gerencial',
   devolucoes: 'Devoluções',
   emitidas: 'NF-e emitidas',
+  canceladas: 'NF-e canceladas',
   entradas: 'Compras e entradas',
   recebidas: 'NF-e recebidas',
   fretes: 'Fretes',
@@ -36,6 +37,7 @@ export const navigationSections = [
     'Documentos e comercial',
     [
       ['emitidas', 'document'],
+      ['canceladas', 'document'],
       ['entradas', 'document'],
       ['recebidas', 'document'],
       ['vendedores', 'users'],

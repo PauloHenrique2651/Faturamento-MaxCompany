@@ -271,12 +271,14 @@ function retryReady(state, id, now) {
 
 export function selectArtifactBatch(outgoing, incoming, state, limit, now = Date.now()) {
   const queues = [
-    outgoing.filter(
-      (row) =>
-        eligibleArtifact(row, 'outgoing') &&
-        !state.completedDocuments?.[artifactPaths(row, 'outgoing').id] &&
-        retryReady(state, artifactPaths(row, 'outgoing').id, now)
-    ),
+    outgoing
+      .filter(
+        (row) =>
+          eligibleArtifact(row, 'outgoing') &&
+          !state.completedDocuments?.[artifactPaths(row, 'outgoing').id] &&
+          retryReady(state, artifactPaths(row, 'outgoing').id, now)
+      )
+      .sort((a, b) => Number(Boolean(b.priority)) - Number(Boolean(a.priority))),
     incoming
       .filter(
         (row) =>

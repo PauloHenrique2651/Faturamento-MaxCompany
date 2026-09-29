@@ -2,6 +2,12 @@ import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } fr
 import { promisify } from 'node:util';
 import { fiscalBreakdown, scopedDocuments, searchDocuments } from '../lib/cloud-fiscal.js';
 import { classifyFiscalOperation } from '../lib/fiscal-operation.js';
+import {
+  financialDocument,
+  financialSaleValue,
+  financialPurchaseValue,
+  confirmedFinancialReturn
+} from '../lib/financial-cfops.js';
 import { salesTargetsRoute } from '../../server/sales-targets.js';
 import { sellerCommissionsRoute } from '../../server/seller-commissions.js';
 import { equivalencesRoute } from '../../server/product-equivalences.js';
@@ -201,7 +207,7 @@ function documentFromCloud(row) {
     : Array.isArray(row.items)
       ? row.items
       : [];
-  return {
+  const document = {
     ...source,
     key: row.access_key,
     companyId: row.company_id,
@@ -252,6 +258,45 @@ function documentFromCloud(row) {
       row.danfe_status === 'AVAILABLE' || Boolean(row.pdf_storage_path || row.danfe_storage_path),
     simpleIcmsCredit: Number(source.simpleIcmsCredit || 0)
   };
+  document.financial = financialDocument(document);
+  return document;
+}
+
+async function linkFinancialReturns(rows) {
+  const returns = rows.filter((row) => !row.canceled && row.fiscalOperation?.type === 'return');
+  const keys = [...new Set(returns.flatMap((row) => row.referencedKeys || []))].filter((key) =>
+    /^\d{44}$/.test(key)
+  );
+  if (!keys.length) return;
+  const sales = new Map();
+  for (let i = 0; i < keys.length; i += 50) {
+    const batch = keys.slice(i, i + 50);
+    const found = await allCloudRows(
+      `/rest/v1/fiscal_documents?select=*&direction=eq.outgoing&is_authorized=eq.true&is_canceled=eq.false&access_key=in.(${batch.join(',')})`
+    );
+    for (const raw of found) {
+      const sale = documentFromCloud(raw);
+      if (sale.fiscalOperation?.type === 'sale') sales.set(`${sale.companyId}/${sale.key}`, sale);
+    }
+  }
+  for (const row of returns) {
+    const sale = (row.referencedKeys || [])
+      .map((key) => sales.get(`${row.companyId}/${key}`))
+      .find(
+        (candidate) =>
+          candidate && candidate.customer?.id && candidate.customer.id === row.supplier?.id
+      );
+    row.saleReference = sale
+      ? {
+          key: sale.key,
+          number: sale.number,
+          series: sale.series,
+          customer: sale.customer,
+          seller: sale.seller,
+          financialStatus: sale.financial.status
+        }
+      : null;
+  }
 }
 
 async function allCloudRows(path) {
@@ -277,8 +322,9 @@ async function cloudDocuments(direction, url) {
     `/rest/v1/fiscal_documents?select=*&${filters.join('&')}&order=issued_on.desc,company_id,access_key`
   );
   const documents = rows.map(documentFromCloud);
+  if (direction === 'incoming') await linkFinancialReturns(documents);
   return {
-    rows: direction === 'outgoing' ? scopedDocuments(documents, url.searchParams) : documents,
+    rows: scopedDocuments(documents, url.searchParams),
     inicio,
     fim
   };
@@ -295,18 +341,38 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
   let items = 0;
   let freight = 0;
   let credit = 0;
+  let financialMovement = 0;
+  let financialSales = 0;
+  let financialPurchases = 0;
+  let nonFinancial = 0;
+  let pending = 0;
   const documents = rows.filter((row) => !row.canceled);
   const canceledDocuments = rows.filter((row) => row.canceled);
   for (const row of documents) {
+    row.financial ||= financialDocument(row);
     const value = amount(row);
     total += value;
+    financialMovement += row.financial.financialValue;
+    nonFinancial += row.financial.nonFinancialValue;
+    pending += row.financial.pendingValue;
+    financialSales += direction === 'outgoing' ? financialSaleValue(row) : 0;
+    financialPurchases += direction === 'incoming' ? financialPurchaseValue(row) : 0;
     const day = daily.get(row.date) || { date: row.date, count: 0, value: 0 };
     day.count++;
     day.value += value;
+    day.financialValue = (day.financialValue || 0) + row.financial.financialValue;
+    day.saleValue = (day.saleValue || 0) + (direction === 'outgoing' ? financialSaleValue(row) : 0);
+    day.purchaseValue =
+      (day.purchaseValue || 0) + (direction === 'incoming' ? financialPurchaseValue(row) : 0);
     daily.set(row.date, day);
     const company = companiesMap.get(row.company) || { name: row.company, count: 0, value: 0 };
     company.count++;
     company.value += value;
+    company.financialValue = (company.financialValue || 0) + row.financial.financialValue;
+    company.saleValue =
+      (company.saleValue || 0) + (direction === 'outgoing' ? financialSaleValue(row) : 0);
+    company.purchaseValue =
+      (company.purchaseValue || 0) + (direction === 'incoming' ? financialPurchaseValue(row) : 0);
     companiesMap.set(row.company, company);
     const party = direction === 'outgoing' ? row.customer : row.supplier;
     if (party) {
@@ -316,7 +382,7 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
       item.value += value;
       parties.set(id, item);
     }
-    if (direction === 'outgoing' && row.seller && row.fiscalOperation?.type === 'sale') {
+    if (direction === 'outgoing' && row.seller && financialSaleValue(row) > 0) {
       const item = sellers.get(row.seller) || {
         id: row.seller,
         name: row.seller,
@@ -324,7 +390,7 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
         value: 0
       };
       item.count++;
-      item.value += value;
+      item.value += financialSaleValue(row);
       sellers.set(row.seller, item);
     }
     const type = row.fiscalOperation?.type || 'other';
@@ -347,7 +413,13 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
   ) {
     const date = new Date(cursor).toISOString().slice(0, 10);
     const row = daily.get(date) || { date, count: 0, value: 0 };
-    series.push({ ...row, value: money(row.value) });
+    series.push({
+      ...row,
+      value: money(row.value),
+      financialValue: money(row.financialValue),
+      saleValue: money(row.saleValue),
+      purchaseValue: money(row.purchaseValue)
+    });
   }
   const ranked = (map) =>
     [...map.values()]
@@ -358,7 +430,11 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
     period: { inicio, fim },
     invoiceCount: documents.length,
     value: money(total),
-    saleValue: money(operations.get('sale')?.value || 0),
+    saleValue: money(financialSales),
+    financialMovementValue: money(financialMovement),
+    nonFinancialValue: money(nonFinancial),
+    pendingClassificationValue: money(pending),
+    operationalSaleValue: money(operations.get('sale')?.value || 0),
     operations: [...operations.values()].map((row) => ({ ...row, value: money(row.value) })),
     canceledCount: canceledDocuments.length,
     canceledValue: money(canceledDocuments.reduce((sum, row) => sum + amount(row), 0)),
@@ -378,7 +454,12 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
     simpleIcmsCredit: money(credit),
     taxes: Object.fromEntries(Object.entries(taxes).map(([key, value]) => [key, money(value)])),
     daily: series,
-    companies: ranked(companiesMap),
+    companies: ranked(companiesMap).map((row) => ({
+      ...row,
+      financialValue: money(row.financialValue),
+      saleValue: money(row.saleValue),
+      purchaseValue: money(row.purchaseValue)
+    })),
     documents: documents.map((row) => ({ ...row, value: money(row.value) })),
     filesInspected: rows.length,
     source: 'Supabase',
@@ -407,16 +488,22 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
     Object.assign(result, fiscalBreakdown(documents, series, scope));
   } else {
     result.suppliers = ranked(parties);
-    const purchases = documents.filter((row) => row.full && row.fiscalOperation?.type === 'sale');
+    const purchases = documents.filter((row) => financialPurchaseValue(row) > 0);
     result.purchaseCount = purchases.length;
-    result.purchaseValue = money(purchases.reduce((sum, row) => sum + amount(row), 0));
+    result.purchaseValue = money(financialPurchases);
     const returnDocuments = documents.filter((row) => row.fiscalOperation?.type === 'return');
     const linkedReturns = returnDocuments.filter((row) => row.saleReference);
     result.returns = {
       value: money(operations.get('return')?.value || 0),
       count: operations.get('return')?.count || 0,
       linkedToSaleCount: linkedReturns.length,
-      linkedToSaleValue: money(linkedReturns.reduce((sum, row) => sum + amount(row), 0)),
+      financialLinkedCount: linkedReturns.filter((row) => confirmedFinancialReturn(row) > 0).length,
+      linkedToSaleValue: money(
+        linkedReturns.reduce((sum, row) => sum + confirmedFinancialReturn(row), 0)
+      ),
+      financialValue: money(
+        linkedReturns.reduce((sum, row) => sum + confirmedFinancialReturn(row), 0)
+      ),
       incompleteCount: returnDocuments.filter((row) => !row.full).length,
       documents: returnDocuments
     };

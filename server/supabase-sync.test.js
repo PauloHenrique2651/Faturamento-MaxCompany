@@ -112,3 +112,22 @@ test('XML de compra importado pelo Falco recebe DANFE antes da fila histórica',
   );
   assert.equal(batch[0].row.key, key(2));
 });
+
+test('cancelamentos emitidos recebem XML e DANFE antes da fila histórica', () => {
+  const key = (value) => String(value).padStart(44, '0');
+  const queue = mergeArtifactQueue(
+    [
+      { company: 'MaxPlast', key: key(1) },
+      { company: 'MaxPlast', key: key(2), canceled: true }
+    ],
+    [],
+    {}
+  );
+  const batch = selectArtifactBatch(
+    queue.filter((row) => row.direction === 'outgoing'),
+    [],
+    {},
+    1
+  );
+  assert.equal(batch[0].row.key, key(2));
+});

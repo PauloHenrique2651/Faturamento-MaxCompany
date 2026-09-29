@@ -152,6 +152,21 @@
             </select></label
           ><label>De<input id="start" type="date" required /></label
           ><label>Até<input id="end" type="date" required /></label
+          ><label
+            >Efeito financeiro<select id="financial-effect">
+              <option value="">Todos</option>
+              <option value="financeiro">Com efeito</option>
+              <option value="nao-financeiro">Sem efeito</option>
+              <option value="pendente">Pendente</option>
+            </select></label
+          ><label
+            >CFOP<input
+              id="cfop-filter"
+              inputmode="numeric"
+              maxlength="4"
+              pattern="[0-9]{4}"
+              placeholder="Todos"
+              aria-label="CFOP de quatro dígitos" /></label
           ><span class="filter-auto"
             ><span class="status-dot" aria-hidden="true"></span>Atualização imediata</span
           ><label class="role-select"

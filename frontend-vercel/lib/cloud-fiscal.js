@@ -1,3 +1,9 @@
+import {
+  financialDocument,
+  financialSaleValue,
+  financialSaleItemValue
+} from './financial-cfops.js';
+
 const money = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const normalized = (value) =>
   String(value || '')
@@ -25,6 +31,14 @@ export function customerGroupFor(row) {
 export function scopedDocuments(rows, params) {
   return rows.filter(
     (row) =>
+      (!params.get('cfop') ||
+        invoiceItems(row).some((item) => String(item.cfop) === params.get('cfop'))) &&
+      (!params.get('efeito') ||
+        (params.get('efeito') === 'financeiro'
+          ? financialDocument(row).financialValue > 0
+          : params.get('efeito') === 'nao-financeiro'
+            ? financialDocument(row).nonFinancialValue > 0
+            : financialDocument(row).pendingValue > 0)) &&
       (!params.get('clienteNfe') || row.customer?.id === params.get('clienteNfe')) &&
       (!params.get('grupoClienteNfe') ||
         customerGroupFor(row).id === params.get('grupoClienteNfe')) &&
@@ -58,7 +72,8 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
   };
   for (const row of documents) {
     const items = invoiceItems(row);
-    const sale = row.fiscalOperation?.type === 'sale';
+    const sale = financialSaleValue(row) > 0;
+    const saleValue = financialSaleValue(row);
     const party = row.customer || { id: '', name: 'Não identificado' };
     discountValue += Number(
       row.discount ?? items.reduce((sum, item) => sum + (Number(item.discount) || 0), 0)
@@ -96,7 +111,7 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
         customers,
         party.id || party.name,
         { id: party.id, name: party.registeredName || party.name, registrations: new Set() },
-        row.value
+        saleValue
       );
       customer.registrations.add(party.name);
       const identity = customerGroupFor(row);
@@ -104,7 +119,7 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
         groups,
         identity.id,
         { ...identity, cnpjs: new Set(), registrations: new Set() },
-        row.value
+        saleValue
       );
       group.cnpjs.add(party.id);
       group.registrations.add(party.name);
@@ -113,7 +128,7 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
           sellers,
           normalized(row.seller),
           { id: normalized(row.seller), name: row.seller },
-          row.value
+          saleValue
         );
       else unattributedCount++;
     }
@@ -125,12 +140,12 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
         item.value,
         item.quantity
       );
-      if (sale)
+      if (sale && financialSaleItemValue(row, item) > 0)
         add(
           products,
           row.company + ':' + (item.code || item.name),
           { id: item.code || item.name, name: item.name, company: row.company },
-          item.value,
+          financialSaleItemValue(row, item),
           item.quantity
         );
     }

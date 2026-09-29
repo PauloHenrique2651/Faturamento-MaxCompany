@@ -22,7 +22,8 @@ import { legacyViews, readSnapshot, saveSnapshot, state } from './state.js';
 import { reports, reportGroups } from './report-catalog.js';
 import { cfopCatalog, cfopDescription } from './lib/cfop-catalog.js';
 import { renderMostrador } from './mostrador.js';
-import { displayPeriod } from './lib/commercial-performance.js';
+import { commercialPerformance, displayPeriod } from './lib/commercial-performance.js';
+import { confirmedFinancialReturn, FINANCIAL_CFOPS } from './lib/financial-cfops.js';
 import { purchaseSuggestions, reconcilePurchases } from './lib/purchase-match.js';
 function href(view, changes = {}) {
   const p = new URLSearchParams(state.params);
@@ -45,7 +46,7 @@ function searchUrl(query, offset = 0) {
   if (offset) params.set('offset', String(offset));
   return `#busca?${params}`;
 }
-const fiscalViews = new Set(['emitidas', 'recebidas', 'impostos', 'busca']);
+const fiscalViews = new Set(['emitidas', 'canceladas', 'recebidas', 'impostos', 'busca']);
 async function sendJson(path, method, body = {}) {
   const response = await fetch(path, {
     method,
@@ -591,7 +592,8 @@ function documentRows(rows, type, limit = state.documentLimit) {
           ? `<small class="document-availability"><span class="${row.xmlStatus === 'AVAILABLE' || row.hasXml ? 'available' : 'missing'}">XML ${row.xmlStatus === 'AVAILABLE' || row.hasXml ? 'disponível' : 'pendente'}</span><span class="${row.danfeStatus === 'AVAILABLE' || row.hasDanfe ? 'available' : 'missing'}">DANFE ${row.danfeStatus === 'AVAILABLE' || row.hasDanfe ? 'disponível' : 'pendente'}</span></small>`
           : '';
       const cfops = [...new Set((row.itemsDetail || []).map((item) => item.cfop).filter(Boolean))];
-      const fiscalTags = `<small class="document-cfops">${cfops.map((code) => `<span class="cfop-badge" title="${esc(cfopDescription(code))}">CFOP ${esc(code)}</span>`).join(' ')}</small>`;
+      const financial = row.financial || {};
+      const fiscalTags = `<small class="document-cfops">${cfops.map((code) => `<span class="cfop-badge" title="${esc(cfopDescription(code))}">CFOP ${esc(code)} · ${financial.items?.find((item) => item.cfop === code)?.effect === 'financial' ? 'GERA FINANCEIRO' : 'NÃO GERA FINANCEIRO'}</span>`).join(' ')}<span class="cfop-badge">${row.canceled ? 'CANCELADA' : financial.status === 'pending' || financial.status === 'partial' ? 'CLASSIFICAÇÃO PENDENTE' : financial.status === 'mixed' ? 'MISTA' : financial.status === 'financial' ? 'FINANCEIRA' : 'SEM EFEITO FINANCEIRO'}</span></small>`;
       return `<button class="document-row${row.canceled ? ' is-canceled' : ''}" data-invoice="${row.key}" data-invoice-type="${type}" data-invoice-company="${xmlCompanies.find((item) => item.nome === row.company)?.id}" data-invoice-canceled="${row.canceled ? 'true' : 'false'}"><span>${date(row.date)}</span><strong>${esc(row.number || row.key.slice(25, 34))}/${esc(row.series || row.key.slice(22, 25))}</strong><span>${esc(row.company)}</span><span class="document-entity">${esc(type === 'saida' ? row.customer?.name : row.supplier?.name)} · ${esc(type === 'entrada' && row.fiscalOperation?.type === 'sale' ? 'Compra / entrada de fornecedor' : operationLabel(row.fiscalOperation?.type))}${row.canceled ? '<small class="document-canceled">Cancelada</small>' : ''}${fiscalTags}${availability}</span><strong>${money(row.value)}</strong></button>`;
     })
     .join(
@@ -740,6 +742,32 @@ function revenueDashboard() {
   const received = state.incomingData?.returns;
   const returned = received?.linkedToSaleValue || 0;
   const net = data.saleValue - returned;
+  const performance = commercialPerformance(
+    data,
+    state.incomingData,
+    state.targets || [],
+    { start: data.period.inicio, end: data.period.fim, horizon: data.period.fim },
+    state.params.get('empresa') || null
+  );
+  const daily = performance.daily;
+  const maxCumulative = Math.max(
+    1,
+    ...daily.map((row) => Math.max(row.cumulative, row.target || 0))
+  );
+  const cx = (index) => 54 + (index / Math.max(1, daily.length - 1)) * 600;
+  const cy = (value) => 170 - (value / maxCumulative) * 135;
+  const cumulativePath = daily
+    .map(
+      (row, index) => `${index ? 'L' : 'M'}${cx(index).toFixed(1)} ${cy(row.cumulative).toFixed(1)}`
+    )
+    .join(' ');
+  const targetPath = daily.every((row) => row.target !== null)
+    ? daily
+        .map(
+          (row, index) => `${index ? 'L' : 'M'}${cx(index).toFixed(1)} ${cy(row.target).toFixed(1)}`
+        )
+        .join(' ')
+    : '';
   const other = (data.operations || [])
     .filter((row) => !['sale', 'return'].includes(row.type))
     .reduce((sum, row) => sum + row.value, 0);
@@ -750,20 +778,21 @@ function revenueDashboard() {
       'MaxCompany / Faturamento'
     ) +
     nfeSource(data, true) +
-    `<section class="kpis">${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas · ${money(data.saleValue)}`, 'trend', true, href('emitidas', { operacao: 'venda' }), 'Soma das NF-e classificadas como venda, autorizadas e não canceladas no período.')}${kpi('Faturamento líquido', bigMoney(net), money(net), 'wallet', false, '', 'Vendas faturadas menos devoluções de clientes confirmadas e vinculadas.')}${kpi('Devoluções confirmadas', bigMoney(returned), `${num(received?.linkedToSaleCount || 0)} vinculadas · ${money(returned)}`, 'document', false, href('devolucoes'), 'Devoluções recebidas de clientes com referência confirmada a uma venda válida.')}${kpi('Outras operações', bigMoney(other), money(other), 'box', false, href('emitidas', { operacao: 'outras' }), 'Transferências, bonificações, ajustes, complementares, mistas, outras e não classificadas.')}${kpi('Movimentação faturada', bigMoney(data.value), money(data.value), 'wallet', false, '', 'Total dos documentos emitidos considerados pela regra fiscal atual.')}${kpi('Taxa de devolução', `${num(data.saleValue ? (returned / data.saleValue) * 100 : 0)}%`, 'Devoluções confirmadas ÷ vendas faturadas', 'target')}</section>` +
+    `<section class="kpis">${kpi('Faturamento real', bigMoney(net), money(net), 'wallet', true, href('dashboard'), 'Vendas com CFOP financeiro menos devoluções financeiras confirmadas.')}${kpi('Vendas financeiras', bigMoney(data.saleValue), `${money(data.saleValue)} nos itens elegíveis`, 'trend', false, href('emitidas', { operacao: 'venda', efeito: 'financeiro' }))}${kpi('Devoluções financeiras', bigMoney(returned), `${num(received?.financialLinkedCount || 0)} confirmadas`, 'document', false, href('devolucoes'))}${kpi('Valor fiscal emitido', bigMoney(data.value), 'Não equivale a faturamento', 'box', false, 'fiscal')}${kpi('Sem efeito financeiro', bigMoney(data.nonFinancialValue || 0), 'Itens fora da regra gerencial', 'box', false, href('emitidas', { efeito: 'nao-financeiro' }))}${kpi('Pendente de classificação', bigMoney(data.pendingClassificationValue || 0), 'Sem CFOP ou diferença sem rateio', 'target', false, href('emitidas', { efeito: 'pendente' }))}</section>` +
+    `<article class="panel nfe-trend">${panelHead('Faturamento real acumulado', targetPath ? 'Azul: realizado · verde: meta acumulada' : 'Realizado acumulado · defina uma meta para comparar')}<svg class="nfe-line-chart" viewBox="0 0 710 205" role="img" aria-label="Faturamento real acumulado e meta"><line x1="54" x2="654" y1="170" y2="170" stroke="#d9e0e5"/><path d="${cumulativePath}" fill="none" stroke="var(--accent)" stroke-width="3"/>${targetPath ? `<path d="${targetPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${daily.map((row, index) => `<circle cx="${cx(index)}" cy="${cy(row.cumulative)}" r="2.5" fill="var(--accent)"><title>${date(row.date)} · realizado ${money(row.cumulative)}${row.target === null ? '' : ` · meta ${money(row.target)}`}</title></circle>`).join('')}</svg></article>` +
     fiscalEventCards(data, state.incomingData) +
     `<div class="revenue-equation"><span>${money(data.saleValue)} <small>vendas faturadas</small></span><b>−</b><span>${money(returned)} <small>devoluções ligadas à venda</small></span><b>=</b><strong>${money(net)}</strong></div>` +
-    `<div class="notice">Do total emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores e ${money(Math.max(0, data.value - data.saleValue - data.returns.value))} são outras operações ou operações mistas. Essas saídas não reduzem as vendas acima. ${num((received?.count || 0) - (received?.linkedToSaleCount || 0))} devoluções recebidas não têm vínculo confirmado com venda; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
+    `<div class="notice">Do valor fiscal emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores. Os itens sem efeito financeiro e as diferenças sem rateio ficam fora das vendas financeiras. ${num((received?.count || 0) - (received?.financialLinkedCount || 0))} devoluções recebidas aguardam vínculo ou conciliação financeira; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${reconciliationPanel(data)}${coveragePanel(data)}</div>` +
     purchaseMatchPanel(data, state.purchaseHistory) +
     `<div class="nfe-charts nfe-charts-secondary">${averagePanel({ ...data, value: data.saleValue })}${forecastPanel(month ? { ...month, value: month.saleValue } : null, state.previousMonthData ? { ...state.previousMonthData, value: state.previousMonthData.saleValue } : null, state.monthIncomingData?.returns?.linkedToSaleValue ?? null)}</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendedores', 'Valor das NF-e atribuído no XML', data.sellers, false, 12, 'seller')}${nfeRanking('Grupos de clientes', 'Valor consolidado dos CNPJs', data.customerGroups, false, 12, 'customerGroup')}</div>` +
     `<article class="panel analytic-panel">${panelHead('Composição documentada', 'Valores informados no total da NF-e')}${metricPanel('Descontos', data.discountValue, 'vDesc dos XMLs')}${metricPanel('Frete destacado', data.freightValue, 'vFrete dos XMLs')}${metricPanel('Ticket médio por NF-e', data.invoiceCount ? data.value / data.invoiceCount : 0, 'Valor total ÷ NF-e')}</article>` +
-    `<p class="nfe-note">A venda é identificada pelos CFOPs dos itens da NF-e inteira. O saldo usa somente devoluções recebidas com referência a uma venda autorizada da mesma empresa e do mesmo CNPJ. Cancelamentos já estão excluídos das vendas e não são abatidos de novo. O markup de referência considera apenas itens com compra anterior conciliada; não representa margem contábil.</p>`;
+    `<p class="nfe-note">A venda financeira é calculada por item e CFOP elegível. O saldo usa devoluções recebidas com referência confirmada a venda integralmente financeira da mesma empresa e do mesmo CNPJ. Cancelamentos já estão excluídos e não são abatidos outra vez. O markup de referência cobre apenas itens com compra anterior conciliada; não representa margem contábil.</p>`;
 }
 function fiscalEventCards(outgoing, incoming) {
   const returns = incoming?.returns || {};
-  return `<section class="fiscal-event-grid" aria-label="Devoluções e cancelamentos"><a class="fiscal-event-card return" href="${esc(href('devolucoes'))}"><span>Devoluções de clientes</span><strong>${money(returns.linkedToSaleValue || 0)}</strong><small>${num(returns.linkedToSaleCount || 0)} vinculadas a vendas · ${num(Math.max(0, (returns.count || 0) - (returns.linkedToSaleCount || 0)))} sem vínculo confirmado</small><b>Examinar devoluções →</b></a><a class="fiscal-event-card cancel" href="${esc(href('emitidas', { operacao: 'canceladas' }))}"><span>NF-e emitidas canceladas</span><strong>${money(outgoing.canceledValue || 0)}</strong><small>${num(outgoing.canceledCount || 0)} notas · ${money(outgoing.canceledSaleValue || 0)} em vendas canceladas</small><b>Abrir notas canceladas →</b></a></section>`;
+  return `<section class="fiscal-event-grid" aria-label="Devoluções e cancelamentos"><a class="fiscal-event-card return" href="${esc(href('devolucoes'))}"><span>Devoluções financeiras confirmadas</span><strong>${money(returns.linkedToSaleValue || 0)}</strong><small>${num(returns.financialLinkedCount || 0)} financeiras · ${num(Math.max(0, (returns.count || 0) - (returns.financialLinkedCount || 0)))} para conciliar</small><b>Examinar devoluções →</b></a><a class="fiscal-event-card cancel" href="${esc(href('canceladas'))}"><span>NF-e emitidas canceladas</span><strong>${money(outgoing.canceledValue || 0)}</strong><small>${num(outgoing.canceledCount || 0)} notas · ${money(outgoing.canceledSaleValue || 0)} em vendas canceladas</small><b>Abrir notas canceladas →</b></a></section>`;
 }
 function dreDashboard() {
   const sales = Number(state.nfeData?.saleValue || 0);
@@ -877,10 +906,13 @@ function returnsDashboard() {
   const issued = outgoing.returns;
   const received = incoming.returns;
   const total = issued.value + received.value;
-  const dates = issued.daily;
+  const dates = outgoing.daily.map((day) => ({ date: day.date, sale: day.saleValue || 0 }));
   const receivedByDate = new Map();
-  for (const row of received.documents.filter((row) => row.saleReference))
-    receivedByDate.set(row.date, (receivedByDate.get(row.date) || 0) + row.value);
+  for (const row of received.documents.filter((row) => confirmedFinancialReturn(row) > 0))
+    receivedByDate.set(
+      row.date,
+      (receivedByDate.get(row.date) || 0) + confirmedFinancialReturn(row)
+    );
   const maxGross = Math.max(1, ...dates.map((row) => row.sale));
   const maxReturn = Math.max(1, ...dates.map((row) => receivedByDate.get(row.date) || 0));
   const x = (index) => 50 + (index / Math.max(1, dates.length - 1)) * 610;
@@ -1006,7 +1038,8 @@ function freightDashboard() {
 }
 function outgoingDocuments() {
   const data = state.nfeData;
-  const operation = state.params.get('operacao') || 'todos';
+  const operation =
+    state.view === 'canceladas' ? 'canceladas' : state.params.get('operacao') || 'todos';
   const operationTypes = {
     venda: 'sale',
     devolucao: 'return',
@@ -1029,15 +1062,50 @@ function outgoingDocuments() {
         ? !['sale', 'return', 'industrial-return'].includes(row.fiscalOperation?.type)
         : row.fiscalOperation?.type === operationTypes[operation])
   );
+  const canceledByCompany = new Map();
+  const canceledByDay = new Map();
+  if (operation === 'canceladas')
+    for (const row of filtered) {
+      canceledByCompany.set(
+        row.company,
+        (canceledByCompany.get(row.company) || 0) + Number(row.value || 0)
+      );
+      canceledByDay.set(row.date, (canceledByDay.get(row.date) || 0) + Number(row.value || 0));
+    }
+  const canceledPanel =
+    operation === 'canceladas'
+      ? `<div class="nfe-charts"><article class="panel nfe-companies">${panelHead('Cancelamentos por empresa', 'Valor das NF-e canceladas, excluído do faturamento')}${[
+          ...canceledByCompany.entries()
+        ]
+          .sort((a, b) => b[1] - a[1])
+          .map(
+            ([name, value]) =>
+              `<a class="nfe-company nfe-company-link" href="${esc(href('canceladas', { empresa: xmlCompanies.find((company) => company.nome === name)?.id }))}"><div><strong>${esc(name)}</strong><span>${money(value)}</span></div><div class="nfe-bar"><span style="width:${(value / Math.max(1, ...canceledByCompany.values())) * 100}%"></span></div></a>`
+          )
+          .join(
+            ''
+          )}</article><article class="panel nfe-companies">${panelHead('Cancelamentos por dia', 'Clique para abrir as NF-e do período')}${[
+          ...canceledByDay.entries()
+        ]
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(
+            ([day, value]) =>
+              `<div class="nfe-company"><div><strong>${date(day)}</strong><span>${money(value)}</span></div><div class="nfe-bar"><span style="width:${(value / Math.max(1, ...canceledByDay.values())) * 100}%"></span></div></div>`
+          )
+          .join('')}</article></div>`
+      : '';
   $('#page').innerHTML =
     head(
-      'NF-e emitidas',
-      'Documentos autorizados encontrados nas pastas Falco.',
+      operation === 'canceladas' ? 'NF-e canceladas' : 'NF-e emitidas',
+      operation === 'canceladas'
+        ? 'Valores e documentos cancelados, fora do faturamento real.'
+        : 'Documentos autorizados encontrados nas pastas Falco.',
       'MaxCompany / Documentos'
     ) +
     nfeSource(data, true) +
     nfeTrail() +
     `<section class="kpis">${kpi('NF-e autorizadas', num(data.invoiceCount), 'Não canceladas · no período', 'document', true)}${kpi('Valor autorizado', bigMoney(data.value), money(data.value), 'wallet')}${kpi('Canceladas', num(data.canceledCount || 0), 'Eventos confirmados', 'target', false, href('emitidas', { operacao: 'canceladas' }))}${kpi('Valor cancelado', bigMoney(data.canceledValue || 0), `${money(data.canceledSaleValue || 0)} em vendas`, 'wallet', false, href('emitidas', { operacao: 'canceladas' }))}</section>` +
+    canceledPanel +
     `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir itens, impostos, XML e DANFE')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Documentos autorizados</option><option value="canceladas">Notas canceladas</option><option value="venda">Somente vendas por CFOP</option><option value="devolucao">Devoluções de compra emitidas</option><option value="transfer">Transferências</option><option value="bonus">Bonificações</option><option value="complementary">Complementares</option><option value="adjustment">Ajustes</option><option value="industrial">Retornos de industrialização</option><option value="mixed">Operações mistas</option><option value="other">Outras operações classificadas</option><option value="unknown">Não classificadas</option><option value="outras">Todas exceto venda/devolução/retorno</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'saida')}</article>`;
   $('#operation-filter').value = operation;
   $('#operation-filter').onchange = (event) =>
@@ -1277,6 +1345,9 @@ function nfeBreakdown() {
 }
 function nfeFiscal() {
   const data = state.nfeData;
+  const returned = Number(state.incomingData?.returns?.linkedToSaleValue || 0);
+  const real = Number(data.saleValue || 0) - returned;
+  const difference = Number(data.value || 0) - real;
   const used = new Set(data.cfops.map((row) => row.name));
   const catalog = cfopCatalog.map((row) => ({
     ...row,
@@ -1284,12 +1355,13 @@ function nfeFiscal() {
   }));
   $('#page').innerHTML =
     head(
-      'CFOPs e classificação',
-      'Distribuição das NF-e emitidas por destino e dos itens por código fiscal.',
+      'Central fiscal',
+      'Conciliação entre o valor fiscal das notas e o faturamento real por CFOP de cada item.',
       'MaxCompany / Fiscal'
     ) +
     nfeSource(data) +
-    `<section class="kpis">${kpi('Valor das notas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Notas emitidas', num(data.invoiceCount), 'Autorizadas e não canceladas', 'document')}${kpi('UF de destino', num(data.ufs.length), 'Identificadas no XML', 'target')}${kpi('CFOP distintos', num(data.cfops.length), 'Nos itens das notas', 'box')}</section>` +
+    `<section class="kpis">${kpi('Faturamento real', bigMoney(real), money(real), 'wallet', true, 'faturamento')}${kpi('Valor fiscal emitido', bigMoney(data.value), money(data.value), 'document', false, 'emitidas')}${kpi('Diferença a investigar', bigMoney(difference), 'Fiscal menos realizado gerencial', 'target')}${kpi('CFOP distintos', num(data.cfops.length), 'Nos itens das notas', 'box')}</section>` +
+    `<article class="panel reconciliation-panel">${panelHead('Ponte fiscal → faturamento real', 'Valores documentados, sem rateios ou estimativas')}<div class="reconciliation-list"><a href="${esc(href('emitidas'))}"><span>Valor fiscal emitido</span><strong>${money(data.value)}</strong></a><a href="${esc(href('emitidas', { efeito: 'nao-financeiro' }))}"><span>Itens sem efeito financeiro</span><strong>− ${money(data.nonFinancialValue || 0)}</strong></a><a href="${esc(href('emitidas', { efeito: 'pendente' }))}"><span>Sem classificação ou diferença entre vNF e itens</span><strong>− ${money(data.pendingClassificationValue || 0)}</strong></a><a href="${esc(href('emitidas', { operacao: 'outras' }))}"><span>Movimento financeiro que não é venda</span><strong>− ${money(Math.max(0, (data.financialMovementValue || 0) - data.saleValue))}</strong></a><a href="${esc(href('devolucoes'))}"><span>Devoluções financeiras confirmadas</span><strong>− ${money(returned)}</strong></a><a href="${esc(href('faturamento'))}"><span>Faturamento real</span><strong>${money(real)}</strong></a></div></article>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Por UF de destino', 'Valor total das NF-e por UF', data.ufs, false, 28)}${nfeRanking('Por CFOP', 'Valor bruto dos itens por CFOP', data.cfops, true, 30)}</div>` +
     `<article class="panel cfop-reference">${panelHead('CFOPs configurados no Falco', 'Referência fornecida pela empresa · os códigos presentes neste período ficam destacados')}${table(
       [
@@ -1308,17 +1380,17 @@ function nfeFiscal() {
         {
           title: 'Vendas faturadas',
           render: (row) =>
-            `<span class="cfop-revenue ${row.revenue ? 'included' : 'excluded'}">${row.revenue ? 'Inclui se autorizada' : 'Fora das vendas'}</span>`
+            `<span class="cfop-revenue ${row.codes.some((code) => FINANCIAL_CFOPS.has(code)) ? 'included' : 'excluded'}">${row.codes.some((code) => FINANCIAL_CFOPS.has(code)) ? 'Pode gerar financeiro' : 'Sem efeito financeiro'}</span>`
         }
       ],
       catalog.sort((a, b) => Number(b.used) - Number(a.used))
     )}</article>` +
-    `<p class="nfe-note">UF usa o valor total da nota. CFOP usa o valor bruto dos itens. O tipo “Venda” do cadastro Falco também abrange remessas, brindes e retornos: ele não comprova venda. Finalidade, autorização, cancelamento e CFOPs da nota determinam o indicador. Notas mistas ficam separadas; devolução recebida só reduz vendas após vínculo confirmado. Simples faturamento exige conciliação com a entrega para evitar dupla contagem.</p>`;
+    `<p class="nfe-note">O CFOP classifica cada item, mas a direção e a operação determinam se o movimento é venda, compra ou outra saída. UF usa vNF; CFOP usa vProd. A diferença entre vNF e itens sem rateio fica pendente. Notas canceladas são exibidas separadamente e já não compõem o valor fiscal autorizado acima.</p>`;
 }
 function incomingDashboard() {
   const data = state.incomingData;
   const purchases = data.documents.filter(
-    (row) => row.full && row.fiscalOperation?.type === 'sale'
+    (row) => row.full && row.fiscalOperation?.type === 'sale' && row.financial?.financialValue > 0
   );
   const aggregate = (key) => {
     const groups = new Map();
@@ -1326,7 +1398,7 @@ function incomingDashboard() {
       const name = key(row);
       const group = groups.get(name) || { name, count: 0, value: 0 };
       group.count++;
-      group.value += Number(row.value) || 0;
+      group.value += Number(row.financial?.financialValue) || 0;
       groups.set(name, group);
     }
     return [...groups.values()].sort((a, b) => b.value - a.value);
@@ -1359,17 +1431,17 @@ function incomingDashboard() {
   $('#page').innerHTML =
     head(
       'Compras documentadas',
-      'NF-e de fornecedores com CFOP de venda, separadas das demais entradas.',
+      'Itens de compra com CFOP financeiro, separados do valor fiscal das entradas.',
       'MaxCompany / Entradas'
     ) +
     `<div class="nfe-source"><span class="nfe-live">Fonte: SEFAZ e XMLs importados do Falco</span><span>${data.sourcesAvailable} de ${data.sourcesTotal} ${data.sourcesTotal === 1 ? 'empresa' : 'empresas'} · Última atualização registrada ${lastSync ? new Date(lastSync).toLocaleString('pt-BR') : 'ainda não realizada'}</span></div>` +
     ((data.sync || []).some((row) => row.error)
       ? '<div class="notice">A consulta automática SEFAZ está indisponível em uma ou mais empresas. O coletor precisa executar na conta Windows com os certificados empresariais válidos. Os dados já sincronizados permanecem disponíveis.</div>'
       : '') +
-    `<section class="kpis">${kpi('Compras identificadas', bigMoney(data.purchaseValue || 0), `${num(data.purchaseCount || 0)} NF-e com CFOP de venda`, 'wallet', true, href('recebidas', { operacao: 'compra' }))}${kpi('Todas as entradas', bigMoney(data.value), `${num(data.invoiceCount)} NF-e no período`, 'document', false, 'recebidas')}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e classificação fiscal', 'box')}${kpi('Somente resumo', num(data.summaryOnlyCount), 'Sem itens para confirmar compra', 'target')}</section>` +
+    `<section class="kpis">${kpi('Compras financeiras', bigMoney(data.purchaseValue || 0), `${num(data.purchaseCount || 0)} NF-e com itens elegíveis`, 'wallet', true, href('recebidas', { operacao: 'compra' }))}${kpi('Valor fiscal de entradas', bigMoney(data.value), `${num(data.invoiceCount)} NF-e no período`, 'document', false, 'recebidas')}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e classificação fiscal', 'box')}${kpi('Somente resumo', num(data.summaryOnlyCount), 'Sem itens para confirmar compra', 'target')}</section>` +
     `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Compras por dia', 'Valor das NF-e classificadas como compra')}${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor diário das compras identificadas">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(max * part)}" y2="${y(max * part)}" stroke="#e4e5e9"/><text x="44" y="${y(max * part) + 4}" text-anchor="end">${short(max * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row.value)}" r="3" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} compras</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem compras identificadas no período.')}</article><article class="panel nfe-companies">${panelHead('Compras por empresa', 'Valor das NF-e de compra')}${companies.length ? companies.map((row) => `<div class="nfe-company"><div><strong>${esc(row.name)}</strong><span>${num(row.count)} notas · ${money(row.value)}</span></div><div class="nfe-bar"><span style="width:${(row.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma compra identificada no período.')}</article></div>` +
     `<div class="nfe-charts nfe-products-row">${nfeRanking('Fornecedores de compras', 'NF-e com CFOP de venda do fornecedor', suppliers, false, 12)}</div>` +
-    `<p class="nfe-note">Compra identificada exige XML completo, autorizado e CFOP de venda do fornecedor. Devoluções, remessas e outras entradas ficam fora desse valor; resumos sem itens continuam no total de entradas até haver classificação. XMLs repetidos são deduplicados por empresa e chave da NF-e. Compra documentada não é custo da mercadoria vendida nem comprova giro ou Mk.B %. ${link('dashboard', 'Ver visão executiva do grupo')}</p>`;
+    `<p class="nfe-note">Compra financeira exige XML completo, autorizado e item com CFOP da regra gerencial. Devoluções, remessas e outras entradas ficam fora; resumos sem itens seguem pendentes. XMLs repetidos são deduplicados por empresa e chave. Compra não é faturamento nem custo da mercadoria vendida. ${link('dashboard', 'Ver visão executiva do grupo')}</p>`;
 }
 function nfeDashboard() {
   const data = state.nfeData;
@@ -1387,6 +1459,23 @@ function nfeDashboard() {
     ? [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])]
     : [];
   const companyMax = Math.max(1, ...data.companies.map((company) => company.value));
+  const returned = Number(state.incomingData?.returns?.linkedToSaleValue || 0);
+  const real = Math.max(0, Number(data.saleValue || 0) - returned);
+  const fiscalDifference = Number(data.value || 0) - real;
+  const purchases = Number(state.incomingData?.purchaseValue || 0);
+  const returnedByCompany = new Map();
+  for (const row of state.incomingData?.returns?.documents || []) {
+    const value = confirmedFinancialReturn(row);
+    returnedByCompany.set(row.company, (returnedByCompany.get(row.company) || 0) + value);
+  }
+  const financialSeries = rows.map((row) => Number(row.saleValue || 0));
+  const financialMax = Math.max(maximum, ...financialSeries);
+  const financialPath = rows
+    .map(
+      (row, index) =>
+        `${index ? 'L' : 'M'}${x(index).toFixed(1)} ${(190 - (financialSeries[index] / financialMax) * 160).toFixed(1)}`
+    )
+    .join(' ');
   $('#page').innerHTML =
     head(
       'Visão executiva MaxCompany',
@@ -1394,13 +1483,14 @@ function nfeDashboard() {
       'MaxCompany / Inteligência'
     ) +
     nfeSource(data, true) +
-    `<section class="kpis">${kpi('Total das NF-e emitidas', bigMoney(data.value), money(data.value), 'wallet', true)}${kpi('Vendas faturadas', bigMoney(data.saleValue), `${num(data.operations.find((row) => row.type === 'sale')?.count || 0)} NF-e de venda autorizadas`, 'trend', false, href('emitidas', { operacao: 'venda' }))}${kpi('Devoluções de clientes confirmadas', bigMoney(state.incomingData?.returns?.linkedToSaleValue || 0), `${num(state.incomingData?.returns?.linkedToSaleCount || 0)} vinculadas · ${num((state.incomingData?.returns?.count || 0) - (state.incomingData?.returns?.linkedToSaleCount || 0))} sem vínculo`, 'document', false, href('devolucoes'))}${kpi('Vendas após devoluções confirmadas', bigMoney(data.saleValue - (state.incomingData?.returns?.linkedToSaleValue || 0)), 'Saldo gerencial documentado', 'wallet', false, 'faturamento')}</section>` +
+    `<section class="kpis">${kpi('Faturamento real', bigMoney(real), money(real) + ' · vendas financeiras − devoluções confirmadas', 'wallet', true, 'faturamento', 'Somente itens de venda com CFOP financeiro em NF-e autorizadas; exclui cancelamentos e devoluções confirmadas vinculadas a venda integralmente financeira.')}${kpi('Vendas financeiras', bigMoney(data.saleValue), 'CFOPs financeiros nos itens de venda', 'trend', false, href('emitidas', { operacao: 'venda', efeito: 'financeiro' }))}${kpi('Devoluções financeiras', bigMoney(returned), `${num(state.incomingData?.returns?.linkedToSaleCount || 0)} vínculos confirmados`, 'document', false, 'devolucoes')}${kpi('Compras financeiras', bigMoney(purchases), 'Entradas com efeito financeiro · não são receita', 'box', false, 'entradas')}</section>` +
+    `<section class="kpis">${kpi('NF-e emitidas · valor fiscal', bigMoney(data.value), money(data.value), 'document', false, 'emitidas')}${kpi('Diferença fiscal × faturamento', bigMoney(fiscalDifference), 'Investigue notas sem efeito, pendências e outras operações', 'target', false, 'fiscal')}${kpi('Sem efeito financeiro', bigMoney(data.nonFinancialValue || 0), 'Itens fora da regra gerencial', 'box', false, href('emitidas', { efeito: 'nao-financeiro' }))}${kpi('Classificação pendente', bigMoney(data.pendingClassificationValue || 0), 'Sem itens/CFOP ou diferença não atribuível', 'document', false, href('emitidas', { efeito: 'pendente' }))}</section>` +
     fiscalEventCards(data, state.incomingData) +
-    `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Evolução diária', 'Emissão por data da NF-e')}<div class="nfe-chart-switch"><button data-chart-mode="value" class="${mode === 'value' ? 'active' : ''}">Valor</button><button data-chart-mode="count" class="${mode === 'count' ? 'active' : ''}">Quantidade</button></div>${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Gráfico de ${mode === 'value' ? 'valor' : 'quantidade'} de NF-e por dia">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(maximum * part)}" y2="${y(maximum * part)}" stroke="#e4e5e9"/><text x="44" y="${y(maximum * part) + 4}" text-anchor="end">${mode === 'value' ? short(maximum * part) : num(maximum * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[metric])}" r="${rows.length > 90 ? 1.5 : 3.2}" fill="var(--accent)"><title>${date(row.date)} · ${money(row.value)} · ${num(row.count)} notas</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : '<div class="empty"><h2>Sem notas neste período</h2><p>Selecione outra data para consultar os XMLs disponíveis.</p></div>'}</article><article class="panel nfe-companies">${panelHead('Por empresa', 'Valor das NF-e autorizadas')}${data.companies.length ? data.companies.map((company) => `<div class="nfe-company"><div><strong>${esc(company.name)}</strong><span>${num(company.count)} notas · ${money(company.value)}</span></div><div class="nfe-bar"><span style="width:${(company.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma empresa com notas no período.')}</article></div>` +
+    `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Fiscal × vendas financeiras por dia', 'Emissão por data da NF-e · azul: valor fiscal · verde: vendas com CFOP financeiro')}<div class="nfe-chart-switch"><button data-chart-mode="value" class="${mode === 'value' ? 'active' : ''}">Valor</button><button data-chart-mode="count" class="${mode === 'count' ? 'active' : ''}">Quantidade</button></div>${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor fiscal e vendas financeiras por dia">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(maximum * part)}" y2="${y(maximum * part)}" stroke="#e4e5e9"/><text x="44" y="${y(maximum * part) + 4}" text-anchor="end">${mode === 'value' ? short(maximum * part) : num(maximum * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${mode === 'value' ? `<path d="${financialPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[metric])}" r="3" fill="var(--accent)"><title>${date(row.date)} · fiscal ${money(row.value)} · financeiro ${money(row.saleValue || 0)}</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem notas neste período.')}</article><article class="panel nfe-companies">${panelHead('Por empresa', 'Faturamento real e valor fiscal das NF-e autorizadas')}${data.companies.length ? data.companies.map((company) => `<div class="nfe-company"><div><strong>${esc(company.name)}</strong><span>Real ${money((company.saleValue || 0) - (returnedByCompany.get(company.name) || 0))} · Fiscal ${money(company.value)} · ${num(company.count)} NF-e</span></div><div class="nfe-bar"><span style="width:${(company.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma empresa com notas no período.')}</article></div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendas por vendedor', `${num(data.unattributedCount)} notas sem vendedor no XML`, data.sellers, false, 8, 'seller')}${nfeRanking('Principais clientes', 'Valor consolidado por grupo de CNPJs', data.customerGroups, false, 8, 'customerGroup')}</div>` +
     `<div class="nfe-charts nfe-charts-secondary nfe-products-row">${nfeRanking('Principais produtos', 'Valor bruto dos itens das NF-e', data.products, true, 8, 'product')}</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${forecastPanel(monthWithin(data))}${averagePanel(data)}</div>` +
-    `<p class="nfe-note">O total emitido inclui venda, devolução a fornecedor, retorno de industrialização e outras operações. Vendas faturadas excluem essas operações. Só a devolução recebida vinculada a uma venda autorizada da mesma empresa e do mesmo CNPJ reduz o saldo exibido. ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão só em resumo. O saldo não é receita líquida contábil.</p>`;
+    `<p class="nfe-note">Faturamento real é uma métrica gerencial: itens de venda com CFOP financeiro, menos devoluções de clientes confirmadas contra venda integralmente financeira. Valor fiscal, compras, cancelamentos e outras saídas não são receita. Diferenças entre vNF e itens sem rateio permanecem pendentes. ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão só em resumo. Não representa receita líquida contábil.</p>`;
   document.querySelectorAll('.nfe-companies .nfe-company').forEach((node, index) => {
     const target = nfeDrilldown(data.companies[index], 'company');
     if (!target) return;
@@ -1492,6 +1582,7 @@ async function load(background = false) {
         'dre',
         'devolucoes',
         'emitidas',
+        'canceladas',
         'vendedores',
         'clientes',
         'produtos',
@@ -1502,11 +1593,17 @@ async function load(background = false) {
     ) {
       state.nfeData = await fetchJson(`/api/falco/nfe?${state.params}`);
       if (seq !== state.seq) return;
-      if (['dashboard', 'faturamento', 'dre', 'devolucoes'].includes(state.view)) {
+      if (['dashboard', 'faturamento', 'dre', 'devolucoes', 'fiscal'].includes(state.view)) {
         state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
         if (seq !== state.seq) return;
       }
       if (state.view === 'faturamento' || state.view === 'dre') {
+        if (state.view === 'faturamento') {
+          state.targets = await fetchJson(
+            `/api/commercial/targets?start=${state.params.get('inicio')}&end=${state.params.get('fim')}`
+          ).catch(() => []);
+          if (seq !== state.seq) return;
+        }
         const monthStart = `${today().slice(0, 7)}-01`;
         const previous = previousMonthAligned(today());
         const monthScope = new URLSearchParams(state.params);
@@ -1537,7 +1634,7 @@ async function load(background = false) {
       else if (state.view === 'faturamento') revenueDashboard();
       else if (state.view === 'dre') dreDashboard();
       else if (state.view === 'devolucoes') returnsDashboard();
-      else if (state.view === 'emitidas') outgoingDocuments();
+      else if (['emitidas', 'canceladas'].includes(state.view)) outgoingDocuments();
       else if (state.view === 'fretes') freightDashboard();
       else if (state.view === 'impostos') taxDashboard();
       else if (state.view === 'fiscal') nfeFiscal();
@@ -1780,6 +1877,8 @@ function route() {
   $('#start').value = state.params.get('inicio');
   $('#end').value = state.params.get('fim');
   $('#preset').value = matchingPreset($('#start').value, $('#end').value, today());
+  $('#financial-effect').value = state.params.get('efeito') || '';
+  $('#cfop-filter').value = state.params.get('cfop') || '';
   updateMobileFilters();
   $('#role').value = state.params.get('papel') || 'interno';
   $('#global-search').value = state.view === 'busca' ? state.params.get('q') || '' : '';
@@ -2205,9 +2304,19 @@ function applyPeriod() {
     inicio: start.value,
     fim: end.value,
     empresa: $('#company').value,
-    papel: document.querySelector('.role-select').offsetParent ? $('#role').value : null
+    papel: document.querySelector('.role-select').offsetParent ? $('#role').value : null,
+    efeito: $('#financial-effect').value || null,
+    cfop: $('#cfop-filter').value || null
   });
 }
+$('#financial-effect').onchange = applyPeriod;
+$('#cfop-filter').onchange = () => {
+  if ($('#cfop-filter').value && !/^\d{4}$/.test($('#cfop-filter').value)) {
+    $('#cfop-filter').reportValidity();
+    return;
+  }
+  applyPeriod();
+};
 function changeCompany(id) {
   $('#company').value = id;
   go(state.view, {

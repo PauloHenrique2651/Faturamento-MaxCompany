@@ -1,3 +1,10 @@
+import {
+  FINANCIAL_CFOPS,
+  financialSaleItemValue,
+  financialSaleValue,
+  financialPurchaseValue
+} from './financial-cfops.js';
+
 const round = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
 const normalize = (value) =>
   String(value || '')
@@ -53,8 +60,9 @@ const similarity = (left, right) => {
 export function purchaseSuggestions(outgoing, incoming, equivalences = []) {
   const purchasesByNcm = new Map();
   for (const document of incoming?.documents || []) {
-    if (!document.full || document.canceled || document.fiscalOperation?.type !== 'sale') continue;
+    if (financialPurchaseValue(document) <= 0) continue;
     for (const item of items(document)) {
+      if (!FINANCIAL_CFOPS.has(String(item.cfop || ''))) continue;
       if (!item.code || !item.ncm || !item.unit || unitPrice(item) === null) continue;
       const key = `${companyId(document)}:${item.ncm}:${normalize(item.unit)}`;
       const list = purchasesByNcm.get(key) || [];
@@ -65,8 +73,9 @@ export function purchaseSuggestions(outgoing, incoming, equivalences = []) {
   const seen = new Set();
   const suggestions = [];
   for (const sale of outgoing?.documents || []) {
-    if (sale.canceled || sale.fiscalOperation?.type !== 'sale') continue;
+    if (financialSaleValue(sale) <= 0) continue;
     for (const item of items(sale)) {
+      if (financialSaleItemValue(sale, item) <= 0) continue;
       const saleKey = `${companyId(sale)}:${item.code}:${item.ncm}:${normalize(item.unit)}`;
       if (!item.code || seen.has(saleKey)) continue;
       seen.add(saleKey);
@@ -99,15 +108,12 @@ export function purchaseSuggestions(outgoing, incoming, equivalences = []) {
 export function reconcilePurchases(outgoing, incoming, options = {}) {
   const lookbackDays = options.lookbackDays || 365;
   const equivalences = options.equivalences || [];
-  const sales = (outgoing?.documents || []).filter(
-    (row) => !row.canceled && row.fiscalOperation?.type === 'sale'
-  );
-  const purchases = (incoming?.documents || []).filter(
-    (row) => !row.canceled && row.full && row.fiscalOperation?.type === 'sale'
-  );
+  const sales = (outgoing?.documents || []).filter((row) => financialSaleValue(row) > 0);
+  const purchases = (incoming?.documents || []).filter((row) => financialPurchaseValue(row) > 0);
   const index = new Map();
   for (const row of purchases) {
     for (const item of items(row)) {
+      if (!FINANCIAL_CFOPS.has(String(item.cfop || ''))) continue;
       const price = unitPrice(item);
       if (price === null) continue;
       const mapped = equivalences
@@ -135,6 +141,7 @@ export function reconcilePurchases(outgoing, incoming, options = {}) {
   let ambiguousLines = 0;
   for (const sale of sales) {
     for (const item of items(sale)) {
+      if (financialSaleItemValue(sale, item) <= 0) continue;
       const salePrice = unitPrice(item);
       if (salePrice === null) continue;
       saleLines++;

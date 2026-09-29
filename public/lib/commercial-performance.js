@@ -1,3 +1,5 @@
+import { financialSaleValue, confirmedFinancialReturn } from './financial-cfops.js';
+
 const round = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 const atNoon = (day) => new Date(`${day}T12:00:00Z`);
 const iso = (date) => date.toISOString().slice(0, 10);
@@ -99,10 +101,12 @@ export function proratedTarget(targets, scopeType, scopeKey, start, end) {
 
 export function commercialPerformance(outgoing, incoming, targets, period, companyId = null) {
   const docs = outgoing?.documents || [];
-  const sales = docs.filter((row) => !row.canceled && row.fiscalOperation?.type === 'sale');
-  const returns = (incoming?.returns?.documents || []).filter((row) => row.saleReference);
-  const gross = round(sales.reduce((sum, row) => sum + Number(row.value || 0), 0));
-  const returned = round(returns.reduce((sum, row) => sum + Number(row.value || 0), 0));
+  const sales = docs.filter((row) => financialSaleValue(row) > 0);
+  const returns = (incoming?.returns?.documents || []).filter(
+    (row) => confirmedFinancialReturn(row) > 0
+  );
+  const gross = round(sales.reduce((sum, row) => sum + financialSaleValue(row), 0));
+  const returned = round(returns.reduce((sum, row) => sum + confirmedFinancialReturn(row), 0));
   const net = round(gross - returned);
   const scopeType = companyId ? 'company' : 'group';
   const scopeKey = companyId ? String(companyId) : 'group';
@@ -122,11 +126,11 @@ export function commercialPerformance(outgoing, incoming, targets, period, compa
     byDay.set(day, { date: day, sales: 0, returns: 0, net: 0, cumulative: 0, target: null });
   for (const row of sales) {
     const day = byDay.get(row.date);
-    if (day) day.sales += Number(row.value || 0);
+    if (day) day.sales += financialSaleValue(row);
   }
   for (const row of returns) {
     const day = byDay.get(row.date);
-    if (day) day.returns += Number(row.value || 0);
+    if (day) day.returns += confirmedFinancialReturn(row);
   }
   let cumulative = 0;
   const daily = [...byDay.values()].map((day) => {
@@ -155,7 +159,7 @@ export function commercialPerformance(outgoing, incoming, targets, period, compa
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase();
     const seller = bySeller.get(key) || { key, name, sales: 0, returns: 0, count: 0 };
-    seller.sales += Number(row.value || 0);
+    seller.sales += financialSaleValue(row);
     seller.count++;
     bySeller.set(key, seller);
   }
@@ -167,7 +171,7 @@ export function commercialPerformance(outgoing, incoming, targets, period, compa
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase();
     const seller = bySeller.get(key);
-    if (seller) seller.returns += Number(row.value || 0);
+    if (seller) seller.returns += confirmedFinancialReturn(row);
   }
   const sellers = [...bySeller.values()]
     .map((row) => ({

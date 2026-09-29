@@ -13,6 +13,8 @@ import { icon } from '../public/ui/icons.js';
 import { viewLabels } from '../public/ui/navigation.js';
 import { cfopCatalog, cfopDescription } from '../public/lib/cfop-catalog.js';
 import { reconcilePurchases, purchaseSuggestions } from '../public/lib/purchase-match.js';
+import { confirmedFinancialReturn, FINANCIAL_CFOPS } from '../public/lib/financial-cfops.js';
+import { commercialPerformance } from '../public/lib/commercial-performance.js';
 
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const functions = [...app.matchAll(/^(?:async )?function \w+\([^]*?^\}/gm)]
@@ -92,6 +94,9 @@ export function renderFiscalViews(
     cfopDescription,
     reconcilePurchases,
     purchaseSuggestions,
+    confirmedFinancialReturn,
+    FINANCIAL_CFOPS,
+    commercialPerformance,
     URLSearchParams,
     xmlCompanies: [
       { id: 1, nome: 'MaxPlast' },
@@ -109,6 +114,7 @@ export function renderFiscalViews(
     dre: 'dreDashboard',
     devolucoes: 'returnsDashboard',
     emitidas: 'outgoingDocuments',
+    canceladas: 'outgoingDocuments',
     entradas: 'incomingDashboard',
     recebidas: 'incomingDocuments',
     fretes: 'freightDashboard',

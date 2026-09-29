@@ -16,6 +16,7 @@ const item = (extra = {}) => ({
   quantity: 10,
   value: 100,
   discount: 0,
+  cfop: '5102',
   ...extra
 });
 const sale = (extra = {}) => ({
@@ -131,7 +132,15 @@ test('meta mensal prevalece sobre a anual e devolução vinculada reduz realizad
   ];
   const incoming = {
     returns: {
-      documents: [{ key: 'R1', date: '2026-09-23', value: 20, saleReference: { key: 'S1' } }]
+      documents: [
+        {
+          key: 'R1',
+          date: '2026-09-23',
+          value: 20,
+          fiscalOperation: { type: 'return' },
+          saleReference: { key: 'S1', financialStatus: 'financial' }
+        }
+      ]
     }
   };
   const result = commercialPerformance(

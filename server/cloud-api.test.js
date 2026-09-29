@@ -16,7 +16,11 @@ test('Vercel publica uma rota explícita para o detalhe e arquivos da NF-e', () 
 });
 
 test('cancelamentos preservam valor e documento, sem inflar vendas autorizadas', () => {
-  const sale = row({ fiscalOperation: { type: 'sale' }, value: 150 });
+  const sale = row({
+    fiscalOperation: { type: 'sale' },
+    value: 150,
+    itemsDetail: [{ cfop: '5102', value: 150 }]
+  });
   const canceled = row({
     key: '35260912345678000123550010000000021000000020',
     fiscalOperation: { type: 'sale' },
@@ -79,6 +83,30 @@ test('produtos e clientes incluem somente vendas, nunca remessa e retorno da Pla
     assert.ok(Array.isArray(summary[field]));
 });
 
+test('dashboard separa montante fiscal, itens financeiros, itens não financeiros e pendência', () => {
+  const sale = row({
+    fiscalOperation: { type: 'sale' },
+    value: 100,
+    customer: { id: '11111111000111', name: 'Cliente' },
+    seller: 'Ana',
+    itemsDetail: [
+      { cfop: '5102', value: 70, code: 'A' },
+      { cfop: '5949', value: 29, code: 'B' }
+    ]
+  });
+  const summary = baseSummary([sale], '2026-09-01', '2026-09-30', 'outgoing');
+  assert.equal(summary.value, 100);
+  assert.equal(summary.saleValue, 70);
+  assert.equal(summary.nonFinancialValue, 29);
+  assert.equal(summary.pendingClassificationValue, 1);
+  assert.equal(summary.sellers[0].value, 70);
+  assert.equal(summary.customerGroups[0].value, 70);
+  assert.deepEqual(
+    summary.products.map((item) => item.id),
+    ['A']
+  );
+});
+
 test('filtros comerciais e busca usam os itens e preservam o CNPJ da contraparte', () => {
   const document = row({
     companyId: 1,
@@ -127,7 +155,10 @@ const row = (overrides = {}) => ({
 
 test('API cloud reconcilia somente devoluções recebidas vinculadas a venda', () => {
   const summary = baseSummary(
-    [row({ saleReference: { key: '1' } }), row({ key: '2'.padStart(44, '0'), value: 40 })],
+    [
+      row({ saleReference: { key: '1', financialStatus: 'financial' } }),
+      row({ key: '2'.padStart(44, '0'), value: 40 })
+    ],
     '2026-09-01',
     '2026-09-30',
     'incoming'

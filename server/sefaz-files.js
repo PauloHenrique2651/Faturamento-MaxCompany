@@ -6,6 +6,7 @@ import { freightInfo, taxNames, taxTotals, xmlItems } from './nfe-metrics.js';
 import { matchesInvoice, searchContext } from './nfe-search.js';
 import { classifyFiscalOperation } from './fiscal-operation.js';
 import { findOutgoingSalesByKeys } from './nfe-files.js';
+import { financialDocument } from '../public/lib/financial-cfops.js';
 
 const root =
   process.env.SEFAZ_DATA_PATH ||
@@ -493,7 +494,8 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
         number: sale.number,
         series: sale.series,
         customer: sale.customer,
-        seller: sale.seller
+        seller: sale.seller,
+        financialStatus: financialDocument(sale).status
       });
   }
   for (const document of documents) {

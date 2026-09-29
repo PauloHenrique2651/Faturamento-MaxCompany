@@ -20,6 +20,8 @@ import { crmCloudRequest } from './crm-store.js';
 import { salesTargetsRoute } from './sales-targets.js';
 import { sellerCommissionsRoute } from './seller-commissions.js';
 import { equivalencesRoute } from './product-equivalences.js';
+import { baseSummary } from '../frontend-vercel/api/[...path].js';
+import { scopedDocuments } from '../frontend-vercel/lib/cloud-fiscal.js';
 import {
   authenticate,
   createUser,
@@ -36,6 +38,29 @@ const port = Number(process.env.PORT || 3100);
 const host = process.env.HOST || '0.0.0.0';
 const refreshSeconds = Math.max(10, Number(process.env.MASERP_REFRESH_SECONDS || 30));
 const cache = new Map();
+
+function financializeSummary(summary, direction, params) {
+  const rows = scopedDocuments(
+    [...(summary.documents || []), ...(summary.canceledDocuments || [])],
+    params
+  );
+  const calculated = baseSummary(
+    rows,
+    summary.period.inicio,
+    summary.period.fim,
+    direction,
+    summary.scope || {}
+  );
+  return {
+    ...summary,
+    ...calculated,
+    source: summary.source || 'Falco',
+    sourcesAvailable: summary.sourcesAvailable,
+    sourcesTotal: summary.sourcesTotal,
+    sync: summary.sync,
+    documentCoverage: summary.documentCoverage
+  };
+}
 
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -174,7 +199,11 @@ async function api(req, res, url, user) {
     };
     if (Object.values(scope).some((value) => value && (value.length > 100 || /[<>]/.test(value))))
       return json(res, 400, { error: 'Filtro inválido' });
-    const summary = await readNfeSummary(filters.inicio, filters.fim, filters.empresa, scope);
+    const summary = financializeSummary(
+      await readNfeSummary(filters.inicio, filters.fim, filters.empresa, scope),
+      'outgoing',
+      url.searchParams
+    );
     if (user.role === 'fiscal') {
       const {
         checkedAt,
@@ -228,7 +257,11 @@ async function api(req, res, url, user) {
     }
     if (filters.empresa !== null && ![1, 2, 3, 4].includes(filters.empresa))
       return json(res, 400, { error: 'Empresa inválida' });
-    const summary = await readIncomingSummary(filters.inicio, filters.fim, filters.empresa);
+    const summary = financializeSummary(
+      await readIncomingSummary(filters.inicio, filters.fim, filters.empresa),
+      'incoming',
+      url.searchParams
+    );
     if (user.role === 'fiscal') {
       const {
         checkedAt,
