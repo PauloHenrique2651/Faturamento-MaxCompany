@@ -7,6 +7,7 @@ import {
   confirmedFinancialReturn
 } from '../public/lib/financial-cfops.js';
 import { classifyFiscalOperation } from '../public/lib/fiscal-operation.js';
+import { scopedDocuments } from '../frontend-vercel/lib/cloud-fiscal.js';
 
 const row = (items, value = 100, type = 'sale') => ({
   value,
@@ -62,4 +63,14 @@ test('devolução só abate quando vinculada a venda integralmente financeira', 
     0
   );
   assert.equal(confirmedFinancialReturn({ ...returned, canceled: true }), 0);
+});
+
+test('filtro financeiro preserva devolução confirmada para o saldo real', () => {
+  const returned = {
+    ...row([item('1202', 25)], 25, 'return'),
+    saleReference: { financialStatus: 'financial' }
+  };
+  assert.deepEqual(scopedDocuments([returned], new URLSearchParams('efeito=financeiro')), [
+    returned
+  ]);
 });

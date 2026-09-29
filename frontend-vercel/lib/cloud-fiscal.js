@@ -1,7 +1,8 @@
 import {
   financialDocument,
   financialSaleValue,
-  financialSaleItemValue
+  financialSaleItemValue,
+  confirmedFinancialReturn
 } from './financial-cfops.js';
 
 const money = (value) => Math.round((Number(value) || 0) * 100) / 100;
@@ -35,7 +36,7 @@ export function scopedDocuments(rows, params) {
         invoiceItems(row).some((item) => String(item.cfop) === params.get('cfop'))) &&
       (!params.get('efeito') ||
         (params.get('efeito') === 'financeiro'
-          ? financialDocument(row).financialValue > 0
+          ? financialDocument(row).financialValue > 0 || confirmedFinancialReturn(row) > 0
           : params.get('efeito') === 'nao-financeiro'
             ? financialDocument(row).nonFinancialValue > 0
             : financialDocument(row).pendingValue > 0)) &&

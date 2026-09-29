@@ -724,7 +724,7 @@ function forecastPanel(data, comparison = null, returnValue = null) {
       : Math.round(
           (returnValue / forecast.elapsed) * (forecast.elapsed + forecast.remaining) * 100
         ) / 100;
-  return `<article class="panel analytic-panel forecast-panel">${panelHead('Fechamento do mês', `${today().slice(0, 7)} · projeção do CRM`)}<div class="forecast-main"><div><small>REALIZADO EM NF-e</small><strong>${money(forecast.actual)}</strong></div><div><small>DOCUMENTOS PROJETADOS</small><strong>${money(forecast.projected)}</strong></div></div>${projectedReturn == null ? '' : `<div class="forecast-returns"><span>Devoluções projetadas <strong>${money(projectedReturn)}</strong></span><span>Saldo documental projetado <strong>${money(forecast.projected - projectedReturn)}</strong></span></div>`}<div class="forecast-range">Cenários dos documentos: ${money(forecast.conservative)} a ${money(forecast.optimistic)}</div>${change === null ? '' : `<p>Ritmo ante os mesmos ${forecast.elapsed} dias do mês anterior: <strong>${change >= 0 ? '+' : ''}${num(change)}%</strong>.</p>`}<p class="formula-note">${esc(forecast.formula)} ${projectedReturn == null ? '' : 'Devoluções extrapoladas pelo ritmo do mês; cobertura parcial da SEFAZ e operações não comerciais limitam a estimativa.'} Sem pedidos em carteira.</p></article>`;
+  return `<article class="panel analytic-panel forecast-panel">${panelHead('Fechamento do mês', `${today().slice(0, 7)} · projeção gerencial`)}<div class="forecast-main"><div><small>VENDAS FINANCEIRAS REALIZADAS</small><strong>${money(forecast.actual)}</strong></div><div><small>VENDAS FINANCEIRAS PROJETADAS</small><strong>${money(forecast.projected)}</strong></div></div>${projectedReturn == null ? '' : `<div class="forecast-returns"><span>Devoluções projetadas <strong>${money(projectedReturn)}</strong></span><span>Faturamento real projetado <strong>${money(Math.max(0, forecast.projected - projectedReturn))}</strong></span></div>`}<div class="forecast-range">Cenários de vendas financeiras: ${money(forecast.conservative)} a ${money(forecast.optimistic)}</div>${change === null ? '' : `<p>Ritmo ante os mesmos ${forecast.elapsed} dias do mês anterior: <strong>${change >= 0 ? '+' : ''}${num(change)}%</strong>.</p>`}<p class="formula-note">Vendas financeiras emitidas no mês + dias restantes × média por dia corrido; cenários ±10% sobre a parcela futura. ${projectedReturn == null ? '' : 'Devoluções extrapoladas pelo ritmo do mês; cobertura parcial da SEFAZ limita a estimativa.'} Sem pedidos em carteira.</p></article>`;
 }
 function monthWithin(data) {
   const first = `${today().slice(0, 7)}-01`;
@@ -733,7 +733,7 @@ function monthWithin(data) {
   return {
     period: { inicio: first, fim: today() },
     daily,
-    value: daily.reduce((sum, row) => sum + row.value, 0)
+    value: daily.reduce((sum, row) => sum + Number(row.saleValue || 0), 0)
   };
 }
 function revenueDashboard() {
@@ -1090,7 +1090,7 @@ function outgoingDocuments() {
           .sort((a, b) => a[0].localeCompare(b[0]))
           .map(
             ([day, value]) =>
-              `<div class="nfe-company"><div><strong>${date(day)}</strong><span>${money(value)}</span></div><div class="nfe-bar"><span style="width:${(value / Math.max(1, ...canceledByDay.values())) * 100}%"></span></div></div>`
+              `<a class="nfe-company nfe-company-link" href="${esc(href('canceladas', { inicio: day, fim: day }))}"><div><strong>${date(day)}</strong><span>${money(value)}</span></div><div class="nfe-bar"><span style="width:${(value / Math.max(1, ...canceledByDay.values())) * 100}%"></span></div></a>`
           )
           .join('')}</article></div>`
       : '';
@@ -1488,8 +1488,8 @@ function nfeDashboard() {
     fiscalEventCards(data, state.incomingData) +
     `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Fiscal × vendas financeiras por dia', 'Emissão por data da NF-e · azul: valor fiscal · verde: vendas com CFOP financeiro')}<div class="nfe-chart-switch"><button data-chart-mode="value" class="${mode === 'value' ? 'active' : ''}">Valor</button><button data-chart-mode="count" class="${mode === 'count' ? 'active' : ''}">Quantidade</button></div>${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor fiscal e vendas financeiras por dia">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(maximum * part)}" y2="${y(maximum * part)}" stroke="#e4e5e9"/><text x="44" y="${y(maximum * part) + 4}" text-anchor="end">${mode === 'value' ? short(maximum * part) : num(maximum * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${mode === 'value' ? `<path d="${financialPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[metric])}" r="3" fill="var(--accent)"><title>${date(row.date)} · fiscal ${money(row.value)} · financeiro ${money(row.saleValue || 0)}</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem notas neste período.')}</article><article class="panel nfe-companies">${panelHead('Por empresa', 'Faturamento real e valor fiscal das NF-e autorizadas')}${data.companies.length ? data.companies.map((company) => `<div class="nfe-company"><div><strong>${esc(company.name)}</strong><span>Real ${money((company.saleValue || 0) - (returnedByCompany.get(company.name) || 0))} · Fiscal ${money(company.value)} · ${num(company.count)} NF-e</span></div><div class="nfe-bar"><span style="width:${(company.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma empresa com notas no período.')}</article></div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendas por vendedor', `${num(data.unattributedCount)} notas sem vendedor no XML`, data.sellers, false, 8, 'seller')}${nfeRanking('Principais clientes', 'Valor consolidado por grupo de CNPJs', data.customerGroups, false, 8, 'customerGroup')}</div>` +
-    `<div class="nfe-charts nfe-charts-secondary nfe-products-row">${nfeRanking('Principais produtos', 'Valor bruto dos itens das NF-e', data.products, true, 8, 'product')}</div>` +
-    `<div class="nfe-charts nfe-charts-secondary">${forecastPanel(monthWithin(data))}${averagePanel(data)}</div>` +
+    `<div class="nfe-charts nfe-charts-secondary nfe-products-row">${nfeRanking('Principais produtos', 'Itens de venda com CFOP financeiro', data.products, true, 8, 'product')}</div>` +
+    `<div class="nfe-charts nfe-charts-secondary">${forecastPanel(monthWithin(data), null, state.monthIncomingData?.returns?.linkedToSaleValue ?? null)}${averagePanel({ ...data, value: data.saleValue }, 'vendas financeiras')}</div>` +
     `<p class="nfe-note">Faturamento real é uma métrica gerencial: itens de venda com CFOP financeiro, menos devoluções de clientes confirmadas contra venda integralmente financeira. Valor fiscal, compras, cancelamentos e outras saídas não são receita. Diferenças entre vNF e itens sem rateio permanecem pendentes. ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão só em resumo. Não representa receita líquida contábil.</p>`;
   document.querySelectorAll('.nfe-companies .nfe-company').forEach((node, index) => {
     const target = nfeDrilldown(data.companies[index], 'company');
