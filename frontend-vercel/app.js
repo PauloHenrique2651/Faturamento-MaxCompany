@@ -1171,7 +1171,9 @@ function incomingDocuments() {
       'MaxCompany / Documentos'
     ) +
     `<div class="nfe-source"><span class="nfe-live">Fonte: SEFAZ e importações do Falco</span><span>${data.sourcesAvailable}/${data.sourcesTotal} empresas consultadas</span></div>` +
-    (eventTotal ? `<article class="panel cancellation-events-panel">${panelHead('Eventos de cancelamento do destinatário', `${num(eventTotal)} XMLs encontrados nas pastas ligadas ao coletor SEFAZ`)}<div class="nfe-companies">${eventRows.map((row) => `<div class="nfe-company"><div><strong>${esc(row.name)}</strong><span>${num(row.cancellationEvents || 0)} arquivos de evento XML</span></div></div>`).join('')}</div><p class="nfe-note">Esses arquivos registram eventos de cancelamento recebidos pela SEFAZ. A quantidade de arquivos não é a mesma coisa que a quantidade ou o valor das notas canceladas, exibidos nos indicadores acima.</p></article>` : '') +
+    (eventTotal
+      ? `<article class="panel cancellation-events-panel">${panelHead('Eventos de cancelamento do destinatário', `${num(eventTotal)} XMLs encontrados nas pastas ligadas ao coletor SEFAZ`)}<div class="nfe-companies">${eventRows.map((row) => `<div class="nfe-company"><div><strong>${esc(row.name)}</strong><span>${num(row.cancellationEvents || 0)} arquivos de evento XML</span></div></div>`).join('')}</div><p class="nfe-note">Esses arquivos registram eventos de cancelamento recebidos pela SEFAZ. A quantidade de arquivos não é a mesma coisa que a quantidade ou o valor das notas canceladas, exibidos nos indicadores acima.</p></article>`
+      : '') +
     `<section class="kpis">${kpi('NF-e recebidas', num(data.invoiceCount), 'Não canceladas · no período', 'document', true)}${kpi('Valor total', bigMoney(data.value), money(data.value), 'wallet')}${kpi('Canceladas', num(data.canceledCount || 0), money(data.canceledValue || 0), 'target', false, href('recebidas', { operacao: 'canceladas' }))}${kpi('XMLs completos', num(data.fullXmlCount), 'Com itens e tributos', 'box')}</section>` +
     `<article class="panel document-panel">${panelHead('Notas', 'Clique para abrir o documento recebido')}<div class="document-filter"><label>Operação<select id="operation-filter"><option value="todos">Entradas não canceladas</option><option value="canceladas">Entradas canceladas</option><option value="compra">Compras identificadas</option><option value="devolucao">Devoluções recebidas</option><option value="vinculada">Devoluções ligadas a venda</option><option value="demais">Demais entradas</option></select></label><span>${num(filtered.length)} notas na lista</span></div>${documentRows(filtered, 'entrada')}</article>`;
   $('#operation-filter').value = operation;
@@ -1476,8 +1478,7 @@ function maserpMetrics(data) {
     invoiceRows,
     commercialRows,
     label: selectedCompany ? names[selectedCompany] : 'Todas as empresas',
-    comparable:
-      data?.period?.inicio === report.startDate && data?.period?.fim === report.endDate,
+    comparable: data?.period?.inicio === report.startDate && data?.period?.fim === report.endDate,
     invoices: sum(invoiceRows, 'count'),
     gross,
     returned,
@@ -1502,7 +1503,9 @@ function maserpReportPanel(data) {
     return `<article class="panel maserp-report-panel unavailable">${panelHead('Conciliação Falco', 'O coletor ainda não publicou o retrato dos relatórios do MASERP')}<p class="nfe-note">Os documentos XML continuam disponíveis. A conciliação comercial aparecerá após a próxima sincronização do servidor local.</p></article>`;
   }
   const { report, ids, names, invoiceRows, commercialRows } = metrics;
-  const updated = sync?.updatedAt ? new Date(sync.updatedAt).toLocaleString('pt-BR') : 'a confirmar';
+  const updated = sync?.updatedAt
+    ? new Date(sync.updatedAt).toLocaleString('pt-BR')
+    : 'a confirmar';
   const sefazRows = sync?.sefaz || [];
   const sefazErrors = sefazRows.filter((row) => row.error).length;
   const sefazAvailable = sefazRows.filter((row) => row.available).length;
@@ -1517,10 +1520,14 @@ function maserpReportPanel(data) {
   const rangeNote = metrics.comparable
     ? 'Mesmo período selecionado'
     : `Retrato de ${date(report.startDate)} a ${date(report.endDate)}; ajuste o filtro para comparar`;
-  return `<section class="maserp-report-panel" aria-label="Conciliação entre relatórios do Falco"><div class="data-pipelines"><div class="pipeline-state ${sync?.fresh ? 'ok' : 'warn'}"><span>SAÍDAS · FALCO/MASERP</span><strong>${sync?.fresh ? 'Atualização ativa' : 'Aguardando coletor'}</strong><small>Concluída em ${esc(updated)}</small></div><div class="pipeline-state ${sefazErrors ? 'warn' : 'ok'}"><span>ENTRADAS · SEFAZ</span><strong>${esc(sefazHeadline)}</strong><small>${esc(sefazDetail)}</small></div></div><article class="panel value-bridge-panel">${panelHead('Do pedido ao resultado fiscal', `${rangeNote} · ${metrics.label}`)}<div class="value-bridge"><div class="bridge-group commercial"><div class="bridge-kicker">RELATÓRIO DE VENDAS E FATURAMENTO</div><div class="bridge-steps"><div><span>Venda em pedidos</span><strong>${money(metrics.sales)}</strong><small>Markup ${num(metrics.salesMarkup)}% · com giro ${money(metrics.salesWithRotation)}</small></div><b>→</b><div><span>Faturado no Falco</span><strong>${money(metrics.billed)}</strong><small>Markup ${num(metrics.billedMarkup)}% · com giro ${money(metrics.billedWithRotation)}</small></div></div></div><div class="bridge-group fiscal"><div class="bridge-kicker">RELATÓRIO DE NOTAS FISCAIS EMITIDAS</div><div class="bridge-steps"><div><span>NF-e emitidas</span><strong>${money(metrics.gross)}</strong><small>${num(metrics.invoices)} notas autorizadas</small></div><b>−</b><div><span>Devolvido</span><strong>${money(metrics.returned)}</strong><small>Quantidade devolvida × preço dos itens</small></div><b>=</b><div class="bridge-result"><span>Saldo fiscal</span><strong>${money(metrics.net)}</strong><small>NF-e menos valor devolvido</small></div></div></div></div><div class="metric-definition-grid"><div><strong>Venda</strong><span>Pedidos registrados no período, faturados ou não.</span></div><div><strong>Faturamento</strong><span>Parte desses pedidos já vinculada a nota no Falco.</span></div><div><strong>NF-e emitidas</strong><span>Valor fiscal total das notas autorizadas.</span></div><div><strong>Saldo fiscal</strong><span>NF-e emitidas menos devolução registrada nos itens.</span></div></div><details class="company-reconciliation"><summary>Ver valores por empresa</summary><div>${invoiceRows.map((row) => {
-    const commercial = commercialRows.find((item) => item.companyCode === row.companyCode) || {};
-    return `<div><strong>${esc(names[ids[row.companyCode]] || `Empresa ${row.companyCode}`)}</strong><span>Venda ${money(commercial.sales || 0)} · faturado ${money(commercial.billed || 0)} · NF-e ${money(row.gross)} · saldo ${money(row.gross - row.returned)}</span></div>`;
-  }).join('')}</div></details><p class="nfe-note">As regras de CFOP continuam na análise dos XMLs. Os valores acima reproduzem as duas leituras do Falco sem misturar pedido, faturamento e documento fiscal.</p></article></section>`;
+  return `<section class="maserp-report-panel" aria-label="Conciliação entre relatórios do Falco"><div class="data-pipelines"><div class="pipeline-state ${sync?.fresh ? 'ok' : 'warn'}"><span>SAÍDAS · FALCO/MASERP</span><strong>${sync?.fresh ? 'Atualização ativa' : 'Aguardando coletor'}</strong><small>Concluída em ${esc(updated)}</small></div><div class="pipeline-state ${sefazErrors ? 'warn' : 'ok'}"><span>ENTRADAS · SEFAZ</span><strong>${esc(sefazHeadline)}</strong><small>${esc(sefazDetail)}</small></div></div><article class="panel value-bridge-panel">${panelHead('Do pedido ao resultado fiscal', `${rangeNote} · ${metrics.label}`)}<div class="value-bridge"><div class="bridge-group commercial"><div class="bridge-kicker">RELATÓRIO DE VENDAS E FATURAMENTO</div><div class="bridge-steps"><div><span>Venda em pedidos</span><strong>${money(metrics.sales)}</strong><small>Markup ${num(metrics.salesMarkup)}% · com giro ${money(metrics.salesWithRotation)}</small></div><b>→</b><div><span>Faturado no Falco</span><strong>${money(metrics.billed)}</strong><small>Markup ${num(metrics.billedMarkup)}% · com giro ${money(metrics.billedWithRotation)}</small></div></div></div><div class="bridge-group fiscal"><div class="bridge-kicker">RELATÓRIO DE NOTAS FISCAIS EMITIDAS</div><div class="bridge-steps"><div><span>NF-e emitidas</span><strong>${money(metrics.gross)}</strong><small>${num(metrics.invoices)} notas autorizadas</small></div><b>−</b><div><span>Devolvido</span><strong>${money(metrics.returned)}</strong><small>Quantidade devolvida × preço dos itens</small></div><b>=</b><div class="bridge-result"><span>Saldo fiscal</span><strong>${money(metrics.net)}</strong><small>NF-e menos valor devolvido</small></div></div></div></div><div class="metric-definition-grid"><div><strong>Venda</strong><span>Pedidos registrados no período, faturados ou não.</span></div><div><strong>Faturamento</strong><span>Parte desses pedidos já vinculada a nota no Falco.</span></div><div><strong>NF-e emitidas</strong><span>Valor fiscal total das notas autorizadas.</span></div><div><strong>Saldo fiscal</strong><span>NF-e emitidas menos devolução registrada nos itens.</span></div></div><details class="company-reconciliation"><summary>Ver valores por empresa</summary><div>${invoiceRows
+    .map((row) => {
+      const commercial = commercialRows.find((item) => item.companyCode === row.companyCode) || {};
+      return `<div><strong>${esc(names[ids[row.companyCode]] || `Empresa ${row.companyCode}`)}</strong><span>Venda ${money(commercial.sales || 0)} · faturado ${money(commercial.billed || 0)} · NF-e ${money(row.gross)} · saldo ${money(row.gross - row.returned)}</span></div>`;
+    })
+    .join(
+      ''
+    )}</div></details><p class="nfe-note">As regras de CFOP continuam na análise dos XMLs. Os valores acima reproduzem as duas leituras do Falco sem misturar pedido, faturamento e documento fiscal.</p></article></section>`;
 }
 function nfeDashboard() {
   const data = state.nfeData;
@@ -2463,7 +2470,16 @@ setInterval(() => {
   if (state.view === 'mostrador') paintMostrador();
 }, 1000);
 setInterval(() => {
-  if (state.view === 'mostrador' && !state.mostradorPaused && !document.hidden) {
+  const display = document.querySelector('.display-shell');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (
+    state.view === 'mostrador' &&
+    !state.mostradorPaused &&
+    !document.hidden &&
+    !reducedMotion &&
+    !display?.matches(':hover') &&
+    !display?.matches(':focus-within')
+  ) {
     state.mostradorSlide = (state.mostradorSlide + 1) % 4;
     paintMostrador();
   }
