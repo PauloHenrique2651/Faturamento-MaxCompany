@@ -1,5 +1,5 @@
 body[data-view='mostrador'] {
-  background: #080a08;
+  background: #061421;
   color: #f5f9fc;
 }
 body[data-view='mostrador'] .sidebar,
@@ -25,18 +25,22 @@ body[data-view='mostrador'] #page {
   width: 100%;
 }
 .display-shell {
-  --display-blue: #c6ff4a;
-  --display-line: rgba(239, 245, 231, 0.18);
-  --display-muted: #9ca793;
-  --display-panel: #111510;
+  --display-blue: #a9d9f5;
+  --display-gold: #e4ad54;
+  --display-line: rgba(191, 221, 240, 0.18);
+  --display-muted: #a9bfd0;
+  --display-panel: rgba(18, 47, 70, 0.82);
   min-height: 100dvh;
   padding: clamp(14px, 1.8vw, 38px);
   display: flex;
   flex-direction: column;
   gap: clamp(12px, 1.2vw, 22px);
-  background: #080a08;
+  background:
+    radial-gradient(circle at 89% -18%, rgba(94, 161, 207, 0.34), transparent 35%),
+    radial-gradient(circle at 2% 102%, rgba(13, 68, 106, 0.35), transparent 42%),
+    linear-gradient(137deg, #061421 0%, #0a1e30 52%, #071827 100%);
   color: #f5f9fc;
-  font-family: 'Cascadia Mono', 'IBM Plex Mono', Consolas, monospace;
+  font-family: Montserrat, Manrope, Arial, sans-serif;
 }
 .display-shell *,
 .display-shell *::before,
@@ -69,8 +73,8 @@ body[data-view='mostrador'] #page {
 }
 .display-identity span,
 .display-kicker {
-  color: var(--display-blue);
-  letter-spacing: 0.16em;
+  color: var(--display-gold);
+  letter-spacing: 0.13em;
   font-size: clamp(10px, 0.72vw, 16px);
   font-weight: 800;
 }
@@ -96,12 +100,13 @@ body[data-view='mostrador'] #page {
   width: 10px;
   height: 10px;
   flex: 0 0 auto;
-  border-radius: 0;
+  border-radius: 100%;
   background: #f5f9fc;
 }
 .display-status.fresh .display-status-dot {
   background: var(--display-blue);
-  animation: display-status-pulse 2s steps(2, end) infinite;
+  box-shadow: 0 0 16px rgba(169, 217, 245, 0.65);
+  animation: display-status-pulse 2.2s ease-in-out infinite;
 }
 .display-clock {
   font-size: clamp(24px, 2.3vw, 45px);
@@ -123,15 +128,16 @@ body[data-view='mostrador'] #page {
 .display-sort button,
 .display-footer button {
   border: 1px solid var(--display-line);
-  border-radius: 1px;
-  background: #0d100d;
+  border-radius: 999px;
+  background: rgba(9, 31, 48, 0.55);
   color: #e7f2fa;
   padding: 9px 14px;
   text-decoration: none;
   cursor: pointer;
   transition:
-    background 0.15s linear,
-    border-color 0.15s linear;
+    background 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease;
 }
 .display-actions button:hover,
 .display-actions a:hover,
@@ -139,8 +145,9 @@ body[data-view='mostrador'] #page {
 .display-companies button:hover,
 .display-sort button:hover,
 .display-footer button:hover {
-  background: #171d14;
+  background: rgba(128, 192, 228, 0.16);
   border-color: var(--display-blue);
+  transform: translateY(-1px);
 }
 .display-controls {
   display: flex;
@@ -158,8 +165,8 @@ body[data-view='mostrador'] #page {
 .display-controls .active,
 .display-sort .active,
 .display-footer .active {
-  background: var(--display-blue);
-  color: #080a08;
+  background: #eaf7ff;
+  color: #0a2133;
   border-color: var(--display-blue);
   font-weight: 800;
 }
@@ -172,7 +179,7 @@ body[data-view='mostrador'] #page {
   display: flex;
   flex-direction: column;
   gap: clamp(12px, 1.1vw, 20px);
-  animation: display-slide-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: display-slide-in 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .display-overview {
   display: grid;
@@ -189,13 +196,16 @@ body[data-view='mostrador'] #page {
 .display-trust article {
   border: 1px solid var(--display-line);
   background: var(--display-panel);
-  border-radius: 1px;
+  border-radius: 18px;
+  box-shadow: 0 18px 45px rgba(0, 11, 23, 0.16);
 }
 .display-hero {
   padding: clamp(18px, 2vw, 42px);
   position: relative;
   overflow: hidden;
-  background: #111a13;
+  background:
+    linear-gradient(112deg, rgba(26, 76, 108, 0.94), rgba(14, 44, 67, 0.89)),
+    radial-gradient(circle at 84% 14%, rgba(154, 211, 243, 0.18), transparent 34%);
 }
 .display-hero::after {
   content: '';
@@ -204,15 +214,17 @@ body[data-view='mostrador'] #page {
   top: -55%;
   width: 35%;
   aspect-ratio: 1;
-  border: 1px solid rgba(198, 255, 74, 0.16);
-  border-radius: 0;
+  border: 1px solid rgba(207, 234, 249, 0.22);
+  border-radius: 50%;
   transform: rotate(32deg);
-  box-shadow: 0 0 0 4vw rgba(198, 255, 74, 0.025);
+  box-shadow:
+    0 0 0 4vw rgba(134, 196, 230, 0.04),
+    0 0 0 8vw rgba(134, 196, 230, 0.025);
 }
 .display-hero > strong {
   display: block;
   font-size: clamp(40px, 6vw, 120px);
-  letter-spacing: -0.06em;
+  letter-spacing: -0.055em;
   line-height: 1.08;
   margin-top: 8px;
   font-variant-numeric: tabular-nums;
@@ -220,7 +232,7 @@ body[data-view='mostrador'] #page {
 }
 .display-hero > p,
 .display-goal > p {
-  color: #b4beb0;
+  color: #cad8e2;
   margin: 9px 0 15px;
   font-size: clamp(12px, 0.95vw, 19px);
 }
@@ -263,14 +275,14 @@ body[data-view='mostrador'] #page {
   color: #fff;
 }
 .display-goal a {
-  color: #c8e9ff;
+  color: #dff4ff;
   font-weight: 700;
 }
 .display-progress {
   width: 100%;
   height: 12px;
-  background: #252a22;
-  border-radius: 0;
+  background: rgba(218, 242, 255, 0.14);
+  border-radius: 999px;
   overflow: hidden;
   margin-bottom: 10px;
 }
@@ -278,7 +290,7 @@ body[data-view='mostrador'] #page {
   display: block;
   height: 100%;
   width: var(--progress);
-  background: var(--display-blue);
+  background: linear-gradient(90deg, #75bce4, #d6f1ff);
   transform-origin: left;
   animation: display-grow-x 800ms 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -311,7 +323,7 @@ body[data-view='mostrador'] #page {
   font-size: clamp(9px, 0.6vw, 13px);
 }
 .display-metric.attention strong {
-  color: var(--display-blue);
+  color: var(--display-gold);
 }
 .display-chart-grid {
   display: grid;
@@ -333,7 +345,7 @@ body[data-view='mostrador'] #page {
 }
 .display-eyebrow {
   display: block;
-  color: var(--display-blue);
+  color: var(--display-gold);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.16em;
@@ -393,7 +405,7 @@ body[data-view='mostrador'] #page {
   overflow: visible;
 }
 .display-chart line {
-  stroke: #293027;
+  stroke: rgba(176, 211, 233, 0.17);
   stroke-width: 1;
 }
 .display-chart text {
@@ -423,7 +435,7 @@ body[data-view='mostrador'] #page {
   fill: var(--display-blue);
 }
 .chart-milestone {
-  fill: #080a08;
+  fill: #0d2b42;
   stroke: var(--display-blue);
   stroke-width: 2;
   opacity: 0;
@@ -437,10 +449,11 @@ body[data-view='mostrador'] #page {
   stroke-width: 4;
 }
 .chart-end-label rect {
-  fill: var(--display-blue);
+  fill: #dff3ff;
+  rx: 8;
 }
 .chart-end-label text {
-  fill: #080a08;
+  fill: #0e3047;
   font-size: 12px;
   font-weight: 900;
 }
@@ -453,7 +466,7 @@ body[data-view='mostrador'] #page {
   font-size: 10px;
 }
 .rhythm-bar {
-  fill: var(--display-blue);
+  fill: #8bcbed;
   opacity: 0.82;
   transform-box: fill-box;
   transform-origin: bottom;
@@ -513,7 +526,8 @@ body[data-view='mostrador'] #page {
 }
 .display-rank-row:hover,
 .display-concise-row:hover {
-  background: #25415477;
+  background: rgba(142, 201, 233, 0.1);
+  border-radius: 10px;
 }
 .display-position {
   font-size: clamp(20px, 1.8vw, 36px);
@@ -521,7 +535,7 @@ body[data-view='mostrador'] #page {
   font-weight: 800;
 }
 .display-rank-row.top .display-position {
-  color: var(--display-blue);
+  color: var(--display-gold);
 }
 .display-rank-name {
   min-width: 0;
@@ -547,11 +561,11 @@ body[data-view='mostrador'] #page {
 .display-concise-row i {
   display: block;
   width: var(--bar-width);
-  background: var(--display-blue);
+  background: linear-gradient(90deg, #6eafd5, #b9e4fa);
   height: 5px;
   margin-top: 7px;
   margin-left: auto;
-  border-radius: 0;
+  border-radius: 999px;
   transform-origin: left;
   animation: display-grow-x 620ms calc(100ms + var(--i) * 55ms) cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -580,7 +594,7 @@ body[data-view='mostrador'] #page {
   text-decoration: none;
 }
 .display-concise-row span {
-  color: var(--display-blue);
+  color: var(--display-gold);
 }
 .display-concise-row strong {
   white-space: nowrap;
@@ -611,7 +625,7 @@ body[data-view='mostrador'] #page {
   border: 0;
   font-weight: 800;
   font-size: clamp(22px, 2vw, 44px);
-  color: var(--display-blue);
+  color: #d9f2ff;
 }
 .display-trust {
   display: grid;
@@ -645,11 +659,13 @@ body[data-view='mostrador'] #page {
   height: 22px;
   border: 1px solid var(--display-line);
   overflow: hidden;
+  border-radius: 999px;
+  background: rgba(7, 25, 40, 0.35);
 }
 .display-rotation i {
   position: absolute;
   inset: 0;
-  background: var(--display-blue);
+  background: linear-gradient(90deg, #7ebce0, #d5f2ff);
   transform: scaleX(0);
   transform-origin: left;
   animation: display-cycle 15s linear infinite;
@@ -664,7 +680,7 @@ body[data-view='mostrador'] #page {
   letter-spacing: 0.12em;
   line-height: 20px;
   padding: 0 8px;
-  mix-blend-mode: difference;
+  text-shadow: 0 1px 6px rgba(0, 17, 29, 0.8);
 }
 .display-shell.is-paused .display-rotation i,
 .display-shell:hover .display-rotation i,
@@ -686,12 +702,12 @@ body[data-view='mostrador'] #page {
   from {
     opacity: 0;
     transform: translateY(14px);
-    letter-spacing: -0.12em;
+    letter-spacing: -0.09em;
   }
   to {
     opacity: 1;
     transform: translateY(0);
-    letter-spacing: -0.06em;
+    letter-spacing: -0.055em;
   }
 }
 @keyframes display-card-in {
