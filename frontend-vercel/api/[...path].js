@@ -542,6 +542,7 @@ async function syncOverview() {
       fresh: ageSeconds !== null && ageSeconds <= 120 && runs[0]?.status !== 'error',
       collecting: runs[0]?.status === 'running',
       sefaz: successful?.details?.sefaz || [],
+      maserpSales: successful?.details?.maserpSales || null,
       pendingArtifacts: successful?.details?.pendingArtifacts ?? null
     };
   } catch {
@@ -749,7 +750,9 @@ async function handle(req, res) {
     };
     return json(res, 200, {
       ...baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'outgoing', scope),
-      synchronization: await syncOverview()
+      synchronization: user.role === 'fiscal'
+        ? { ...(await syncOverview()), maserpSales: null }
+        : await syncOverview()
     });
   }
   if (path === '/api/falco/entradas') {

@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderDanfe } from './danfe.js';
+import { readMaserpSalesSnapshot } from './maserp-report.js';
 import { readNfeSummary, readOutgoingDocument } from './nfe-files.js';
 import {
   readIncomingDocument,
@@ -433,10 +434,11 @@ export async function syncSupabaseFromFalco() {
       body: JSON.stringify({ source: 'falco-local', status: 'running', details: { start, end } })
     });
     runId = created?.[0]?.id || null;
-    const [outgoing, incoming, sefaz] = await Promise.all([
+    const [outgoing, incoming, sefaz, maserpSales] = await Promise.all([
       readNfeSummary(start, end),
       readIncomingSummary(start, end),
-      readIncomingSyncStatus()
+      readIncomingSyncStatus(),
+      readMaserpSalesSnapshot(`${end.slice(0, 7)}-01`, end)
     ]);
     const userCount = await syncUsers();
     const outgoingRows = [...outgoing.documents, ...outgoing.canceledDocuments].map((row) =>
@@ -517,6 +519,7 @@ export async function syncSupabaseFromFalco() {
       outgoingSources: `${outgoing.sourcesAvailable}/${outgoing.sourcesTotal}`,
       incomingSources: `${incoming.sourcesAvailable}/${incoming.sourcesTotal}`,
       sefaz,
+      maserpSales,
       artifactAttempts,
       artifactErrors,
       generatedDanfeCount,

@@ -581,10 +581,10 @@ function syncSefaz() {
   });
 }
 syncSefaz();
-const configuredSefazCheckSeconds = Number(process.env.SEFAZ_CHECK_SECONDS || 300);
+const configuredSefazCheckSeconds = Number(process.env.SEFAZ_CHECK_SECONDS || 60);
 const sefazCheckSeconds = Number.isFinite(configuredSefazCheckSeconds)
   ? Math.max(60, configuredSefazCheckSeconds)
-  : 300;
+  : 60;
 setInterval(syncSefaz, sefazCheckSeconds * 1000);
 
 function syncSupabase() {
@@ -593,8 +593,8 @@ function syncSupabase() {
   );
 }
 syncSupabase();
-const configuredSupabaseSyncSeconds = Number(process.env.SUPABASE_SYNC_SECONDS || 300);
+const configuredSupabaseSyncSeconds = Number(process.env.SUPABASE_SYNC_SECONDS || 60);
 const supabaseSyncSeconds = Number.isFinite(configuredSupabaseSyncSeconds)
   ? Math.max(60, configuredSupabaseSyncSeconds)
-  : 300;
+  : 60;
 setInterval(syncSupabase, supabaseSyncSeconds * 1000);

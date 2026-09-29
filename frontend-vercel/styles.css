@@ -1952,6 +1952,159 @@ dialog::backdrop {
   color: var(--accent);
   font-size: 11px;
 }
+.maserp-report-panel {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0 24px;
+}
+.data-pipelines {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--line);
+}
+.pipeline-state {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  align-items: center;
+  padding: 14px 18px;
+  background: var(--surface);
+}
+.pipeline-state::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  grid-row: 1 / 3;
+  border-radius: 50%;
+  background: #15936b;
+  box-shadow: 0 0 0 4px #e5f5ef;
+}
+.pipeline-state.warn::before {
+  background: #c5821b;
+  box-shadow: 0 0 0 4px #fff3df;
+}
+.pipeline-state span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+}
+.pipeline-state strong {
+  justify-self: end;
+  font-size: 12px;
+}
+.pipeline-state small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 10px;
+}
+.value-bridge-panel {
+  overflow: hidden;
+}
+.value-bridge {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.35fr);
+  gap: 1px;
+  background: var(--line);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.bridge-group {
+  padding: 22px;
+  background: #fbfcfd;
+}
+.bridge-group.fiscal {
+  background: #f5f8fb;
+}
+.bridge-kicker {
+  margin-bottom: 16px;
+  color: #5d7188;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.35px;
+}
+.bridge-steps {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.bridge-steps > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+.bridge-steps > b {
+  color: #8b98a6;
+  font-size: 20px;
+  font-weight: 400;
+}
+.bridge-steps span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.bridge-steps strong {
+  font-size: clamp(21px, 2vw, 31px);
+  letter-spacing: -1px;
+  white-space: nowrap;
+}
+.bridge-steps small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.bridge-result strong {
+  color: #0d7254;
+}
+.metric-definition-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.metric-definition-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 14px 18px;
+  background: var(--surface);
+}
+.metric-definition-grid strong {
+  font-size: 11px;
+}
+.metric-definition-grid span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.company-reconciliation {
+  border-bottom: 1px solid var(--line);
+}
+.company-reconciliation summary {
+  padding: 14px 20px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+.company-reconciliation > div > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.company-reconciliation span {
+  color: var(--muted);
+  text-align: right;
+}
+.compact-kpis .kpi-value {
+  font-size: clamp(21px, 1.8vw, 29px);
+}
 .document-row.is-canceled {
   background: #fff8f7;
 }
@@ -1997,6 +2150,40 @@ dialog::backdrop {
   margin-top: 18px;
 }
 @media (max-width: 750px) {
+  .data-pipelines,
+  .value-bridge,
+  .metric-definition-grid {
+    grid-template-columns: 1fr;
+  }
+  .pipeline-state {
+    grid-template-columns: auto 1fr;
+  }
+  .pipeline-state strong {
+    justify-self: start;
+  }
+  .bridge-group {
+    padding: 18px 16px;
+  }
+  .bridge-steps {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .bridge-steps > b {
+    transform: rotate(90deg);
+    width: 20px;
+  }
+  .bridge-steps strong {
+    white-space: normal;
+  }
+  .company-reconciliation > div > div {
+    display: grid;
+    gap: 5px;
+  }
+  .company-reconciliation span {
+    text-align: left;
+    line-height: 1.5;
+  }
   .fiscal-event-grid {
     grid-template-columns: 1fr;
   }
@@ -2005,5 +2192,19 @@ dialog::backdrop {
   }
   .dre-row a {
     grid-column: 1 / -1;
+  }
+}
+@media (max-width: 520px) {
+  .kpis {
+    grid-template-columns: 1fr;
+  }
+  .kpi-value {
+    font-size: 28px;
+  }
+  .data-pipelines {
+    border-radius: 4px;
+  }
+  .value-bridge-panel .panel-head {
+    display: block;
   }
 }
