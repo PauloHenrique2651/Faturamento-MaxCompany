@@ -71,6 +71,8 @@ function falcoMetrics(outgoing, selectedCompany) {
   const invoices = filter(report.companies);
   const commercial = filter(report.commercial);
   const profitability = filter(report.profitability);
+  const sellerProfitability = filter(report.sellerProfitability);
+  const incomingFreights = filter(report.incomingFreights);
   const sum = (rows, key) => rows.reduce((total, row) => total + Number(row[key] || 0), 0);
   const sales = sum(commercial, 'sales');
   const salesCost = sum(commercial, 'salesCost');
@@ -80,7 +82,10 @@ function falcoMetrics(outgoing, selectedCompany) {
   const gross = sum(invoices, 'gross');
   const returned = sum(invoices, 'returned');
   const profitabilityCost = sum(profitability, 'cost');
-  const profitabilityProfit = sum(profitability, 'profit');
+  const profitabilityGrossProfit = sum(profitability, 'profit');
+  const incomingFreightExpense = sum(incomingFreights, 'value');
+  const profitabilityProfit = profitabilityGrossProfit - incomingFreightExpense;
+  const profitabilityExpenses = sum(profitability, 'expenses') + incomingFreightExpense;
   return {
     sales,
     billed,
@@ -93,10 +98,13 @@ function falcoMetrics(outgoing, selectedCompany) {
     profitabilityGross: sum(profitability, 'gross'),
     profitabilityNet: sum(profitability, 'net'),
     profitabilityCost,
+    profitabilityGrossProfit,
     profitabilityProfit,
     profitabilityReturned: sum(profitability, 'returned'),
-    profitabilityExpenses: sum(profitability, 'expenses'),
+    profitabilityExpenses,
+    incomingFreightExpense,
     profitabilityMarkup: profitabilityCost ? (profitabilityProfit / profitabilityCost) * 100 : null,
+    sellerProfitability,
     billedCostCoverage,
     billedProfit: billedCostCoverage - billedCost,
     billedCoveragePct: billed ? (billedCostCoverage / billed) * 100 : null,
@@ -175,7 +183,39 @@ function dailyRhythmChart(daily) {
   return `<div class="display-chart-head compact"><div><span class="display-eyebrow">PULSO DIÁRIO</span><h2>Vendas por emissão</h2></div><strong>${shortMoney(average)}<small>/ dia corrido</small></strong></div><svg class="display-chart rhythm-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="rhythm-title rhythm-description"><title id="rhythm-title">Vendas financeiras por dia de emissão</title><desc id="rhythm-description">Média diária de ${esc(money(average))}. Melhor dia ${esc(daily[bestIndex].date)} com ${esc(money(peak))}.</desc><line class="average-line" x1="${left}" x2="${right}" y1="${y(average)}" y2="${y(average)}"/><text class="average-label" x="${right}" y="${y(average) - 7}" text-anchor="end">média ${esc(shortMoney(average))}</text>${bars}<text x="${left}" y="${height - 10}">${esc(daily[0].date.slice(8) + '/' + daily[0].date.slice(5, 7))}</text><text x="${right}" y="${height - 10}" text-anchor="end">${esc(last.date.slice(8) + '/' + last.date.slice(5, 7))}</text></svg><p class="display-chart-note">Pico de vendas em <strong>${esc(daily[bestIndex].date.slice(8) + '/' + daily[bestIndex].date.slice(5, 7))}</strong> · ${esc(shortMoney(peak))}</p>`;
 }
 
-function sellerRows(sellers, sort, params, limit = 10) {
+function sellerRows(sellers, sort, params, profitability = [], limit = 10) {
+  if (sort === 'profit') {
+    const consolidated = new Map();
+    for (const row of profitability) {
+      const key = String(row.sellerName || 'Não identificado')
+        .trim()
+        .toLocaleUpperCase('pt-BR');
+      const current = consolidated.get(key) || {
+        name: row.sellerName || 'Não identificado',
+        count: 0,
+        sales: 0,
+        cost: 0,
+        profit: 0
+      };
+      current.count += Number(row.count || 0);
+      current.sales += Number(row.sales || 0);
+      current.cost += Number(row.cost || 0);
+      current.profit += Number(row.profit || 0);
+      consolidated.set(key, current);
+    }
+    const rows = [...consolidated.values()].sort((a, b) => b.profit - a.profit);
+    const max = Math.max(1, ...rows.map((row) => Math.abs(row.profit)));
+    return (
+      rows
+        .slice(0, limit)
+        .map((row, index) => {
+          const markup = row.cost ? (row.profit / row.cost) * 100 : null;
+          const url = link('vendedores', params, { vendedorNfe: row.name });
+          return `<a class="display-rank-row profit ${row.profit < 0 ? 'loss' : ''} ${index < 3 ? 'top' : ''}" style="--i:${index}" href="${esc(url)}"><span class="display-position">${String(index + 1).padStart(2, '0')}</span><span class="display-rank-name">${esc(row.name)}<small>${number(row.count)} notas · vendas ${money(row.sales)} · ${markup === null ? 'sem custo' : `${number(markup)}% sobre custo`}</small></span><span class="display-rank-value">${money(row.profit)}<i style="--bar-width:${Math.max(2, (Math.abs(row.profit) / max) * 100)}%"></i></span></a>`;
+        })
+        .join('') || '<p class="display-empty">Sem lucratividade por vendedor neste período.</p>'
+    );
+  }
   const rows = [...sellers];
   if (sort === 'goal')
     rows.sort((a, b) => (b.target ? b.net / b.target : -1) - (a.target ? a.net / a.target : -1));
@@ -240,7 +280,7 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
       : result.average >= result.requiredDaily
         ? 'Acima do ritmo necessário'
         : 'Abaixo do ritmo necessário';
-  const ranking = sellerRows(result.sellers, sort, params);
+  const ranking = sellerRows(result.sellers, sort, params, falco?.sellerProfitability);
   const heroValue = falco?.billed ?? result.net;
   const heroLabel = falco ? 'FATURAMENTO VINCULADO A PEDIDOS' : 'FATURAMENTO LÍQUIDO DOCUMENTADO';
   const heroDescription = falco
@@ -264,16 +304,16 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
     <section class="display-slide ${slide === 0 ? 'active' : ''}" data-slide="0">
       <div class="display-overview display-summary">
         <article class="display-hero display-primary-metric"><span class="display-kicker">${heroLabel}</span><strong>${money(heroValue)}</strong><p>${heroDescription}</p><div class="display-hero-strip">${falco ? `<span>Venda em pedidos <b>${money(falco.sales)}</b><small>${number(falco.orders)} pedidos · markup ${falco.salesMarkup === null ? '—' : `${number(falco.salesMarkup)}%`}</small></span><span>NF-e emitidas <b>${money(falco.gross)}</b><small>${number(falco.invoices)} notas · saldo fiscal ${money(falco.net)}</small></span>` : `<span>Vendas faturadas <b>${money(result.gross)}</b></span><span>Devoluções confirmadas <b>${money(result.returned)}</b></span>`}</div></article>
-        <article class="display-profit-card"><span class="display-kicker">LUCRATIVIDADE FALCO</span>${falco?.profitabilityAvailable ? `<strong>${money(falco.profitabilityProfit)}</strong><div class="display-profit-rate"><span>Lucro sobre custo</span><b>${profitMarkup}</b></div><div class="display-profit-details"><span><small>Custo total</small><b>${money(falco.profitabilityCost)}</b></span><span><small>Resultado após devoluções</small><b>${money(falco.profitabilityNet)}</b></span><span><small>Devoluções</small><b>${money(falco.profitabilityReturned)}</b></span><span><small>Outras despesas</small><b>${money(falco.profitabilityExpenses)}</b></span></div><p>Valores em tempo real do Relatório de Lucratividade do Falco para o período e empresa selecionados.</p>` : `<strong class="display-no-profit">Relatório indisponível</strong><p>A lucratividade aparecerá após a próxima sincronização do coletor Falco.</p>`}</article>
+        <article class="display-profit-card"><span class="display-kicker">LUCRO LÍQUIDO CONCILIADO</span>${falco?.profitabilityAvailable ? `<strong>${money(falco.profitabilityProfit)}</strong><div class="display-profit-rate"><span>Lucro líquido sobre custo</span><b>${profitMarkup}</b></div><div class="display-profit-details"><span><small>Lucro no relatório Falco</small><b>${money(falco.profitabilityGrossProfit)}</b></span><span><small>Custo total</small><b>${money(falco.profitabilityCost)}</b></span><span><small>Fretes de entrada</small><b>− ${money(falco.incomingFreightExpense)}</b></span><span><small>Outras despesas totais</small><b>${money(falco.profitabilityExpenses)}</b></span></div><p>Atualização em tempo real. O frete de entrada é tratado como outra despesa e abatido do lucro do Falco.</p>` : `<strong class="display-no-profit">Relatório indisponível</strong><p>A lucratividade aparecerá após a próxima sincronização do coletor Falco.</p>`}</article>
       </div>
       <div class="display-lower-summary"><article class="display-goal"><span class="display-kicker">${esc(targetNote)}</span><strong>${targetValue}</strong>${result.target === null ? `<p>Defina a meta em Metas comerciais.</p><a href="#metas">Abrir metas</a>` : `<div class="display-progress"><i style="--progress:${Math.min(100, Math.max(0, result.progress))}%"></i></div><b>${number(result.progress)}% realizado</b><p>Faltam <strong>${money(result.gap)}</strong></p><small>Progresso pelo faturamento líquido documentado.</small>`}</article>
         <div class="display-fiscal-summary"><div><span>NF-e autorizadas</span><strong>${money(falco?.gross ?? result.gross)}</strong><small>${falco ? `${number(falco.invoices)} documentos` : 'Vendas fiscais no período'}</small></div><div class="deduction"><span>Devoluções vinculadas</span><strong>− ${money(falco?.returned ?? result.returned)}</strong><small>Com vínculo confirmado</small></div><div class="net"><span>Saldo fiscal documentado</span><strong>${money(falco?.net ?? result.net)}</strong><small>Antes de ajustes contábeis</small></div></div>
       </div>
     </section>
     <section class="display-slide ${slide === 1 ? 'active' : ''}" data-slide="1"><div class="display-section-head"><div><span class="display-kicker">RITMO E TENDÊNCIA</span><h1>Evolução do período</h1><p>Valores fiscais por data de emissão. Confira o horário da última sincronização no cabeçalho.</p></div></div><div class="display-metrics">${metric('Projeção de fechamento', result.projection === null ? 'Aguardando histórico' : money(result.projection), 'Estimativa pelo ritmo recente e dias úteis')}${metric('Dias úteis restantes', String(result.remaining), 'Até o fim do período')}${metric('Ritmo fiscal médio', `${money(result.average)}/dia`, pace, result.requiredDaily !== null && result.average < result.requiredDaily ? 'attention' : '')}${metric('Necessário por dia', result.requiredDaily === null ? '—' : `${money(result.requiredDaily)}/dia`, result.target === null ? 'Meta não cadastrada' : 'Para atingir a meta')}${metric('Movimento hoje', money(result.today), 'Pela data de emissão da NF-e')}${metric('Ticket médio fiscal', ticket, 'Valor fiscal ÷ quantidade de NF-e')}</div><div class="display-chart-grid"><article class="display-chart-wrap">${cumulativeChart(result.daily)}</article><article class="display-chart-wrap rhythm-panel">${dailyRhythmChart(result.daily)}</article></div></section>
-    <section class="display-slide ${slide === 2 ? 'active' : ''}" data-slide="2"><div class="display-section-head"><div><span class="display-kicker">EQUIPE COMERCIAL</span><h1>Ranking de vendedores</h1><p>Vendas identificadas nos XMLs; devoluções abatidas quando vinculadas à venda original.</p></div><div class="display-sort" role="group" aria-label="Ordenar ranking"><button data-display-sort="net" class="${sort === 'net' ? 'active' : ''}">Faturamento</button><button data-display-sort="goal" class="${sort === 'goal' ? 'active' : ''}">% da meta</button><button data-display-sort="ticket" class="${sort === 'ticket' ? 'active' : ''}">Ticket</button></div></div><div class="display-ranking">${ranking}</div><p class="display-footnote">${number(outgoing?.unattributedCount || 0)} NF-e de venda sem vendedor identificável. Metas individuais aparecem após cadastro.</p></section>
+    <section class="display-slide ${slide === 2 ? 'active' : ''}" data-slide="2"><div class="display-section-head"><div><span class="display-kicker">EQUIPE COMERCIAL</span><h1>${sort === 'profit' ? 'Lucratividade por vendedor' : 'Ranking de vendedores'}</h1><p>${sort === 'profit' ? 'Lucro, custo e vendas conforme o Relatório de Lucratividade por Vendedor do Falco.' : 'Vendas identificadas nos XMLs; devoluções abatidas quando vinculadas à venda original.'}</p></div><div class="display-sort" role="group" aria-label="Variação do ranking"><button data-display-sort="net" class="${sort === 'net' ? 'active' : ''}">Faturamento</button><button data-display-sort="profit" class="${sort === 'profit' ? 'active' : ''}">Lucro Falco</button><button data-display-sort="goal" class="${sort === 'goal' ? 'active' : ''}">% da meta</button><button data-display-sort="ticket" class="${sort === 'ticket' ? 'active' : ''}">Ticket</button></div></div><div class="display-ranking">${ranking}</div><p class="display-footnote">${sort === 'profit' ? 'O percentual é lucro dividido pelo custo. Fretes de entrada permanecem na conciliação geral porque não possuem rateio por vendedor.' : `${number(outgoing?.unattributedCount || 0)} NF-e de venda sem vendedor identificável. Metas individuais aparecem após cadastro.`}</p></section>
     <section class="display-slide ${slide === 3 ? 'active' : ''}" data-slide="3"><div class="display-section-head"><div><span class="display-kicker">CARTEIRA E MIX</span><h1>Clientes e produtos</h1><p>Maiores valores documentados no período.</p></div></div><div class="display-double"><article><h2>Principais grupos de clientes</h2>${conciseRanking(result.topCustomers, params, 'clientes', 'grupoClienteNfe')}</article><article><h2>Produtos por valor bruto dos itens</h2>${conciseRanking(outgoing?.products || [], params, 'produtos', 'produtoNfe')}</article></div></section>
-    <section class="display-slide ${slide === 4 ? 'active' : ''}" data-slide="4"><div class="display-section-head"><div><span class="display-kicker">COMPOSIÇÃO E FONTES</span><h1>Critérios dos indicadores</h1></div></div><div class="display-reconciliation"><div><span>NF-e de venda autorizadas</span><strong>${money(result.gross)}</strong></div><div><span>Devoluções de clientes com vínculo confirmado</span><strong>− ${money(result.returned)}</strong></div><div class="total"><span>Faturamento líquido documentado</span><strong>${money(result.net)}</strong></div></div><div class="display-trust"><article><h2>Faturamento</h2><p>Vendas identificadas por CFOP. Cancelamentos são excluídos das notas autorizadas; devoluções reduzem o total somente com referência confirmada.</p></article><article><h2>Lucratividade</h2><p>Reproduz o Relatório de Lucratividade do Falco: valor líquido após devoluções, custo total, outras despesas e lucro. O percentual é lucro dividido pelo custo.</p></article><article><h2>Atualização</h2><p>Última sincronização: ${esc(stamp(checked))}. O mostrador consulta o CRM a cada minuto; as pastas fiscais e a SEFAZ seguem a cadência própria dos coletores.</p></article></div></section>
+    <section class="display-slide ${slide === 4 ? 'active' : ''}" data-slide="4"><div class="display-section-head"><div><span class="display-kicker">COMPOSIÇÃO E FONTES</span><h1>Critérios dos indicadores</h1></div></div><div class="display-reconciliation"><div><span>NF-e de venda autorizadas</span><strong>${money(result.gross)}</strong></div><div><span>Devoluções de clientes com vínculo confirmado</span><strong>− ${money(result.returned)}</strong></div><div class="total"><span>Faturamento líquido documentado</span><strong>${money(result.net)}</strong></div></div><div class="display-trust"><article><h2>Faturamento</h2><p>Vendas identificadas por CFOP. Cancelamentos são excluídos das notas autorizadas; devoluções reduzem o total somente com referência confirmada.</p></article><article><h2>Lucratividade</h2><p>Reproduz o Relatório de Lucratividade do Falco e abate os conhecimentos de frete de entrada como outras despesas. O percentual é o lucro líquido dividido pelo custo.</p></article><article><h2>Atualização</h2><p>Última sincronização: ${esc(stamp(checked))}. O mostrador consulta o CRM a cada 30 segundos; as pastas fiscais e a SEFAZ seguem a cadência dos coletores.</p></article></div></section>
     <footer class="display-footer"><nav aria-label="Telas do mostrador">${slides.map((name, index) => `<button type="button" data-display-slide="${index}" class="${index === slide ? 'active' : ''}" aria-label="${esc(name)}">${String(index + 1).padStart(2, '0')} <span>${esc(name)}</span></button>`).join('')}</nav><div class="display-rotation" aria-hidden="true"><i></i><span>${options.paused ? 'PAUSADO' : 'PRÓXIMA TELA'}</span></div><div><button type="button" data-display-prev aria-label="Tela anterior">Anterior</button><button type="button" data-display-pause>${options.paused ? 'Retomar' : 'Pausar'} rotação</button><button type="button" data-display-next aria-label="Próxima tela">Próxima</button></div></footer>
   </div>`;
   const signature = JSON.stringify({
@@ -291,6 +331,7 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
       falco.profitabilityCost,
       falco.profitabilityNet,
       falco.profitabilityExpenses,
+      falco.sellerProfitability?.map((row) => [row.companyCode, row.sellerCode, row.profit]),
       falco.gross,
       falco.returned
     ],

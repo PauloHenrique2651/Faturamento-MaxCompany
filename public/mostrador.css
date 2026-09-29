@@ -646,6 +646,11 @@ body[data-view='mostrador'] #page {
   display: flex;
   gap: 6px;
 }
+.display-sort button:focus-visible,
+.display-rank-row:focus-visible {
+  outline: 2px solid var(--display-blue);
+  outline-offset: 2px;
+}
 .display-ranking {
   flex: 1;
   padding: 12px clamp(15px, 1.8vw, 36px);
@@ -708,6 +713,15 @@ body[data-view='mostrador'] #page {
   border-radius: 999px;
   transform-origin: left;
   animation: display-grow-x 620ms calc(100ms + var(--i) * 55ms) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.display-rank-row.profit .display-rank-value i {
+  background: linear-gradient(90deg, #d69b3e, #f3d294);
+}
+.display-rank-row.loss .display-rank-value {
+  color: #ffaaa4;
+}
+.display-rank-row.loss .display-rank-value i {
+  background: linear-gradient(90deg, #b84442, #f09a94);
 }
 .display-footnote,
 .display-empty {
@@ -1098,6 +1112,15 @@ body[data-view='metas'] .mobile-filter-trigger {
   }
   .display-sort {
     margin: 15px 0;
+    width: 100%;
+    overflow-x: auto;
+    padding: 2px 0 7px;
+    scrollbar-width: thin;
+  }
+  .display-sort button {
+    min-height: 44px;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
   .display-rank-row {
     grid-template-columns: 28px 1fr 120px;

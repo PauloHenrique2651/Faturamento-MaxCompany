@@ -2005,6 +2005,146 @@ dialog::backdrop {
 .value-bridge-panel {
   overflow: hidden;
 }
+.fiscal-overview-panel {
+  overflow: hidden;
+}
+.fiscal-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--line);
+}
+.fiscal-overview-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 22px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+a.fiscal-overview-card:hover {
+  z-index: 1;
+  background: #f6faff;
+  transform: translateY(-2px);
+}
+a.fiscal-overview-card:focus-visible {
+  outline: 3px solid #4f7ea6;
+  outline-offset: -3px;
+}
+.fiscal-overview-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #4f7ea6;
+}
+.fiscal-overview-card.returned::before {
+  background: #c78b25;
+}
+.fiscal-overview-card.canceled::before {
+  background: #bc3d3a;
+}
+.fiscal-overview-card.balance::before {
+  background: #168363;
+}
+.fiscal-overview-card span,
+.commercial-overview span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+.fiscal-overview-card strong {
+  font-size: clamp(22px, 2vw, 32px);
+  letter-spacing: -1px;
+  overflow-wrap: anywhere;
+}
+.fiscal-overview-card small,
+.commercial-overview small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.commercial-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 18px 22px;
+  background: #f7f9fb;
+}
+.commercial-overview > div {
+  display: grid;
+  gap: 5px;
+}
+.commercial-overview > i {
+  color: #8090a0;
+  font-style: normal;
+}
+.commercial-overview strong {
+  font-size: clamp(18px, 1.55vw, 25px);
+}
+.commercial-overview .profit {
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+.commercial-overview .profit strong {
+  color: #0d7254;
+}
+.freight-headline {
+  margin-bottom: 18px;
+}
+.freight-directions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.freight-direction {
+  min-width: 0;
+  overflow: hidden;
+}
+.freight-direction.incoming {
+  border-top: 4px solid #168363;
+}
+.freight-direction.outgoing {
+  border-top: 4px solid #4f7ea6;
+}
+.freight-direction-total {
+  display: grid;
+  gap: 5px;
+  padding: 8px 22px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.freight-direction-total span,
+.freight-direction-total small {
+  color: var(--muted);
+}
+.freight-direction-total span {
+  font-size: 11px;
+  font-weight: 750;
+}
+.freight-direction-total strong {
+  font-size: clamp(25px, 2.5vw, 38px);
+  letter-spacing: -1.2px;
+}
+.freight-direction-total small {
+  font-size: 10px;
+}
+.freight-entry-list {
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+.freight-entry-list .code {
+  display: block;
+  margin-top: 3px;
+}
 .value-bridge {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.35fr);
@@ -2152,8 +2292,31 @@ dialog::backdrop {
 @media (max-width: 750px) {
   .data-pipelines,
   .value-bridge,
-  .metric-definition-grid {
+  .metric-definition-grid,
+  .fiscal-overview-grid,
+  .commercial-overview {
     grid-template-columns: 1fr;
+  }
+  .freight-directions {
+    grid-template-columns: 1fr;
+  }
+  .fiscal-overview-card {
+    padding: 18px 16px;
+  }
+  .commercial-overview {
+    gap: 14px;
+    padding: 18px 16px;
+  }
+  .commercial-overview > i {
+    display: none;
+  }
+  .commercial-overview .profit {
+    padding: 14px 0 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+  .freight-direction-total {
+    padding: 4px 16px 18px;
   }
   .pipeline-state {
     grid-template-columns: auto 1fr;

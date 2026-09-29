@@ -33,7 +33,7 @@ function databaseSettings() {
     port: Number(process.env.MASERP_SQL_PORT || 1433),
     connectionTimeout: 8000,
     requestTimeout: 30000,
-    pool: { min: 0, max: 2, idleTimeoutMillis: 10000 },
+    pool: { min: 0, max: 3, idleTimeoutMillis: 10000 },
     options: {
       encrypt: String(process.env.MASERP_SQL_ENCRYPT || 'false').toLowerCase() === 'true',
       trustServerCertificate:
@@ -150,12 +150,56 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
     profitabilityRequest.input('NotasFiscais_BT', sql.Bit, true);
     profitabilityRequest.input('CupomFiscal_BT', sql.Bit, false);
     profitabilityRequest.input('NotaFiscalConsumidorEletronica_BT', sql.Bit, false);
-    const profitabilityResult = await profitabilityRequest.execute(
-      'dbo.usp_SelecionarDadosParaRelatorioLucratividade'
+    const sellerProfitabilityRequest = pool.request();
+    sellerProfitabilityRequest.input('empresa_VC', sql.VarChar(sql.MAX), companyCodes.join(','));
+    sellerProfitabilityRequest.input('vendedor_IN', sql.Int, null);
+    sellerProfitabilityRequest.input('numero_IN', sql.Int, null);
+    sellerProfitabilityRequest.input(
+      'datainicio_DT',
+      sql.DateTime,
+      new Date(`${startDate}T00:00:00`)
     );
+    sellerProfitabilityRequest.input('datafinal_DT', sql.DateTime, new Date(`${endDate}T23:59:59`));
+    sellerProfitabilityRequest.input('retirarempresasdogrupo_BT', sql.Bit, true);
+    sellerProfitabilityRequest.input('NotasFiscais_BT', sql.Bit, true);
+    sellerProfitabilityRequest.input('CupomFiscal_BT', sql.Bit, false);
+    sellerProfitabilityRequest.input('NotaFiscalConsumidorEletronica_BT', sql.Bit, false);
+    sellerProfitabilityRequest.input('VendedorInterno_BT', sql.Bit, true);
+    sellerProfitabilityRequest.input('VendedorExterno_BT', sql.Bit, true);
+    const incomingFreightRequest = pool.request();
+    incomingFreightRequest.input('empresas_VC', sql.VarChar(50), companyCodes.join(','));
+    incomingFreightRequest.input('fornecedor_IN', sql.Int, null);
+    incomingFreightRequest.input('cliente_IN', sql.Int, null);
+    incomingFreightRequest.input('transportadora_IN', sql.Int, null);
+    incomingFreightRequest.input('dataEmissaoInicial_DT', sql.DateTime, null);
+    incomingFreightRequest.input('dataEmissaoFinal_DT', sql.DateTime, null);
+    incomingFreightRequest.input(
+      'dataEntradaInicial_DT',
+      sql.DateTime,
+      new Date(`${startDate}T00:00:00`)
+    );
+    incomingFreightRequest.input(
+      'dataEntradaFinal_DT',
+      sql.DateTime,
+      new Date(`${endDate}T23:59:59`)
+    );
+    incomingFreightRequest.input('valorInicial_MN', sql.Money, null);
+    incomingFreightRequest.input('valorFinal_MN', sql.Money, null);
+    incomingFreightRequest.input('finalizadas_BT', sql.Bit, true);
+    incomingFreightRequest.input('semFinanceiro_BT', sql.Bit, true);
+    incomingFreightRequest.input('TipoConhecimentoFrete_IN', sql.Int, 2);
+    const [profitabilityResult, sellerProfitabilityResult, incomingFreightResult] =
+      await Promise.all([
+        profitabilityRequest.execute('dbo.usp_SelecionarDadosParaRelatorioLucratividade'),
+        sellerProfitabilityRequest.execute(
+          'dbo.usp_SelecionarDadosParaRelatorioLucratividadePorVendedor'
+        ),
+        incomingFreightRequest.execute('dbo.usp_SelecionarNotaFiscalEntradaFretePorFiltros')
+      ]);
     const invoiceRows = result.recordsets[0] || [];
     const commercialRows = result.recordsets[1] || [];
     const profitabilityInvoices = profitabilityResult.recordsets?.[1] || [];
+    const sellerProfitabilityInvoices = sellerProfitabilityResult.recordsets?.[1] || [];
     const profitabilityByCompany = new Map();
     for (const row of profitabilityInvoices) {
       const companyCode = Number(row.emp_empresa_IN);
@@ -179,6 +223,32 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       current.returned += returned;
       current.expenses += Number(row.not_totaloutrasdespesas_MN || 0);
       profitabilityByCompany.set(companyCode, current);
+    }
+    const sellerProfitability = new Map();
+    for (const row of sellerProfitabilityInvoices) {
+      const companyCode = Number(row.emp_empresa_IN);
+      const sellerCode = Number(row.ven_codigo || 0);
+      const sellerName = String(row.ven_nome || 'Não identificado').trim();
+      const key = `${companyCode}|${sellerCode}|${sellerName}`;
+      const current = sellerProfitability.get(key) || {
+        companyCode,
+        sellerCode,
+        sellerName,
+        internal: Boolean(row.interno_BT),
+        count: 0,
+        sales: 0,
+        cost: 0,
+        profit: 0,
+        returned: 0,
+        expenses: 0
+      };
+      current.count += 1;
+      current.sales += Number(row.not_total_MN || 0);
+      current.cost += Number(row.not_totalcusto_MN || 0);
+      current.profit += Number(row.not_lucro_MN || 0);
+      current.returned += Number(row.not_valordevolvido_MN || 0);
+      current.expenses += Number(row.not_totaloutrasdespesas_MN || 0);
+      sellerProfitability.set(key, current);
     }
     return {
       available: true,
@@ -204,7 +274,21 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         billedWithRotation: Number(row.billed_with_rotation || 0),
         billedWithoutRotation: Number(row.billed_without_rotation || 0)
       })),
-      profitability: [...profitabilityByCompany.values()]
+      profitability: [...profitabilityByCompany.values()],
+      sellerProfitability: [...sellerProfitability.values()],
+      incomingFreights: (incomingFreightResult.recordsets?.[0] || []).map((row) => ({
+        companyCode: Number(row.empresa),
+        internalNumber: Number(row.numeroInterno),
+        documentNumber: String(row.numeroDocumento || ''),
+        entryDate: row.dataEntrada,
+        issueDate: row.dataEmissao,
+        cfop: String(row.CFOP || ''),
+        carrierCode: Number(row.transportadora || 0),
+        carrier: String(row.razaoTransportadora || 'Não identificada').trim(),
+        carrierId: String(row.CnpjTransportadora || '').trim(),
+        value: Number(row.valorFrete || 0),
+        outgoingKnowledge: Boolean(row.ConhecimentoDeNotaSaida)
+      }))
     };
   } catch {
     poolPromise = undefined;

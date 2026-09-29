@@ -299,13 +299,30 @@ async function linkFinancialReturns(rows) {
   }
 }
 
+const cloudRowsCache = new Map();
+const cloudRowsTtl = 10000;
+
 async function allCloudRows(path) {
-  const rows = [];
-  for (let offset = 0; ; offset += 500) {
-    const page = await supabase(`${path}&limit=500&offset=${offset}`);
-    rows.push(...page);
-    if (page.length < 500) return rows;
-  }
+  const now = Date.now();
+  const cached = cloudRowsCache.get(path);
+  if (cached?.rows && now - cached.updatedAt < cloudRowsTtl) return cached.rows;
+  if (cached?.pending) return cached.pending;
+  const pending = (async () => {
+    const rows = [];
+    for (let offset = 0; ; offset += 500) {
+      const page = await supabase(`${path}&limit=500&offset=${offset}`);
+      rows.push(...page);
+      if (page.length < 500) break;
+    }
+    cloudRowsCache.set(path, { rows, updatedAt: Date.now() });
+    if (cloudRowsCache.size > 12) cloudRowsCache.delete(cloudRowsCache.keys().next().value);
+    return rows;
+  })().catch((error) => {
+    cloudRowsCache.delete(path);
+    throw error;
+  });
+  cloudRowsCache.set(path, { pending, updatedAt: now });
+  return pending;
 }
 
 async function cloudDocuments(direction, url) {
@@ -750,9 +767,10 @@ async function handle(req, res) {
     };
     return json(res, 200, {
       ...baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'outgoing', scope),
-      synchronization: user.role === 'fiscal'
-        ? { ...(await syncOverview()), maserpSales: null }
-        : await syncOverview()
+      synchronization:
+        user.role === 'fiscal'
+          ? { ...(await syncOverview()), maserpSales: null }
+          : await syncOverview()
     });
   }
   if (path === '/api/falco/entradas') {
