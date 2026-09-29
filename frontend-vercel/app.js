@@ -781,7 +781,7 @@ function revenueDashboard() {
     ) +
     nfeSource(data, true) +
     maserpReportPanel(data) +
-    `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas financeiras nos XMLs', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? `Markup ${num(falco.billedMarkup)}% · ${money(falco.billedWithoutRotation)} sem giro` : `${money(data.saleValue)} em itens elegíveis`, 'wallet', true, href('dashboard'), hasFalcoPeriod ? 'Parte dos pedidos vinculada a notas no relatório de Vendas e Faturamento do Falco.' : 'Itens dos XMLs classificados pelos CFOPs financeiros.')}${kpi(hasFalcoPeriod ? 'Venda em pedidos' : 'Saldo gerencial dos XMLs', bigMoney(hasFalcoPeriod ? falco.sales : net), hasFalcoPeriod ? `Markup ${num(falco.salesMarkup)}% · ${money(falco.salesWithoutRotation)} sem giro` : 'Vendas financeiras menos devoluções vinculadas', 'trend', false, href('dashboard'))}${kpi(hasFalcoPeriod ? 'NF-e emitidas no Falco' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas · antes das devoluções` : 'Não equivale a faturamento', 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal após devolução' : 'Devoluções financeiras', bigMoney(hasFalcoPeriod ? falco.net : returned), hasFalcoPeriod ? `${money(falco.returned)} devolvidos no Falco` : `${num(received?.financialLinkedCount || 0)} confirmadas`, 'box', false, 'devolucoes')}</section>` +
+    `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas financeiras nos XMLs', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? `Resultado ${money(falco.billedProfit)} · custo cobre ${num(falco.billedCoveragePct)}% do faturado` : `${money(data.saleValue)} em itens elegíveis`, 'wallet', true, href('dashboard'), hasFalcoPeriod ? 'Valor dos pedidos com vínculo a NF-e; resultado e markup usam somente itens com custo unitário informado.' : 'Itens dos XMLs classificados pelos CFOPs financeiros.')}${kpi(hasFalcoPeriod ? 'Venda em pedidos' : 'Saldo gerencial dos XMLs', bigMoney(hasFalcoPeriod ? falco.sales : net), hasFalcoPeriod ? `Markup ${num(falco.salesMarkup)}% · ${money(falco.salesWithoutRotation)} sem giro` : 'Vendas financeiras menos devoluções vinculadas', 'trend', false, href('dashboard'))}${kpi(hasFalcoPeriod ? 'NF-e emitidas no Falco' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas · antes das devoluções` : 'Não equivale a faturamento', 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal após devolução' : 'Devoluções financeiras', bigMoney(hasFalcoPeriod ? falco.net : returned), hasFalcoPeriod ? `${money(falco.returned)} devolvidos no Falco` : `${num(received?.financialLinkedCount || 0)} confirmadas`, 'box', false, 'devolucoes')}</section>` +
     `<section class="kpis compact-kpis">${kpi('Itens financeiros nos XMLs', bigMoney(data.saleValue), 'Classificação item a item pelos CFOPs definidos', 'trend', false, href('emitidas', { operacao: 'venda', efeito: 'financeiro' }))}${kpi('Devoluções captadas no SEFAZ', bigMoney(returned), `${num(received?.financialLinkedCount || 0)} vínculos confirmados`, 'document', false, href('devolucoes'))}${kpi('Sem efeito financeiro', bigMoney(data.nonFinancialValue || 0), 'Remessas, transferências e operações fora da regra', 'box', false, href('emitidas', { efeito: 'nao-financeiro' }))}${kpi('Pendente de classificação', bigMoney(data.pendingClassificationValue || 0), 'Sem CFOP ou diferença sem rateio', 'target', false, href('emitidas', { efeito: 'pendente' }))}</section>` +
     `<article class="panel nfe-trend">${panelHead('Faturamento real acumulado', targetPath ? 'Azul: realizado · verde: meta acumulada' : 'Realizado acumulado · defina uma meta para comparar')}<svg class="nfe-line-chart" viewBox="0 0 710 205" role="img" aria-label="Faturamento real acumulado e meta"><line x1="54" x2="654" y1="170" y2="170" stroke="#d9e0e5"/><path d="${cumulativePath}" fill="none" stroke="var(--accent)" stroke-width="3"/>${targetPath ? `<path d="${targetPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${daily.map((row, index) => `<circle cx="${cx(index)}" cy="${cy(row.cumulative)}" r="2.5" fill="var(--accent)"><title>${date(row.date)} · realizado ${money(row.cumulative)}${row.target === null ? '' : ` · meta ${money(row.target)}`}</title></circle>`).join('')}</svg></article>` +
     fiscalEventCards(data, state.incomingData) +
@@ -1471,6 +1471,7 @@ function maserpMetrics(data) {
   const salesCost = sum(commercialRows, 'salesCost');
   const billed = sum(commercialRows, 'billed');
   const billedCost = sum(commercialRows, 'billedCost');
+  const billedCostCoverage = sum(commercialRows, 'billedCostCoverage');
   return {
     report,
     ids,
@@ -1491,7 +1492,10 @@ function maserpMetrics(data) {
     salesWithoutRotation: sum(commercialRows, 'salesWithoutRotation'),
     billed,
     billedCost,
-    billedMarkup: billedCost ? ((billed - billedCost) / billedCost) * 100 : 0,
+    billedCostCoverage,
+    billedProfit: billedCostCoverage - billedCost,
+    billedCoveragePct: billed ? (billedCostCoverage / billed) * 100 : 0,
+    billedMarkup: billedCost ? ((billedCostCoverage - billedCost) / billedCost) * 100 : 0,
     billedWithRotation: sum(commercialRows, 'billedWithRotation'),
     billedWithoutRotation: sum(commercialRows, 'billedWithoutRotation')
   };
@@ -1571,7 +1575,7 @@ function nfeDashboard() {
     ) +
     nfeSource(data, true) +
     maserpReportPanel(data) +
-    `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas financeiras nos XMLs', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? `Markup ${num(falco.billedMarkup)}% · com giro ${money(falco.billedWithRotation)}` : money(data.saleValue), 'wallet', true, 'faturamento', 'Valor do relatório comercial do Falco para o mesmo período selecionado.')}${kpi(hasFalcoPeriod ? 'Venda em pedidos' : 'Saldo gerencial dos XMLs', bigMoney(hasFalcoPeriod ? falco.sales : real), hasFalcoPeriod ? `Markup ${num(falco.salesMarkup)}% · ${num(falco.orders)} pedidos localizados` : 'Itens financeiros menos devoluções vinculadas', 'trend', false, 'faturamento')}${kpi(hasFalcoPeriod ? 'NF-e emitidas' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas no relatório fiscal` : money(data.value), 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal' : 'Compras financeiras', bigMoney(hasFalcoPeriod ? falco.net : purchases), hasFalcoPeriod ? `Após ${money(falco.returned)} devolvidos` : 'Entradas com efeito financeiro', 'box', false, hasFalcoPeriod ? 'devolucoes' : 'entradas')}</section>` +
+    `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas financeiras nos XMLs', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? `Resultado ${money(falco.billedProfit)} · markup ${num(falco.billedMarkup)}% sobre custo conhecido` : money(data.saleValue), 'wallet', true, 'faturamento', 'Valor do relatório comercial do Falco para o mesmo período selecionado.')}${kpi(hasFalcoPeriod ? 'Venda em pedidos' : 'Saldo gerencial dos XMLs', bigMoney(hasFalcoPeriod ? falco.sales : real), hasFalcoPeriod ? `Markup ${num(falco.salesMarkup)}% · ${num(falco.orders)} pedidos localizados` : 'Itens financeiros menos devoluções vinculadas', 'trend', false, 'faturamento')}${kpi(hasFalcoPeriod ? 'NF-e emitidas' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas no relatório fiscal` : money(data.value), 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal' : 'Compras financeiras', bigMoney(hasFalcoPeriod ? falco.net : purchases), hasFalcoPeriod ? `Após ${money(falco.returned)} devolvidos` : 'Entradas com efeito financeiro', 'box', false, hasFalcoPeriod ? 'devolucoes' : 'entradas')}</section>` +
     `<section class="kpis compact-kpis">${kpi('Itens financeiros nos XMLs', bigMoney(data.saleValue), 'CFOPs financeiros nas NF-e de saída', 'trend', false, href('emitidas', { operacao: 'venda', efeito: 'financeiro' }))}${kpi('Devoluções captadas no SEFAZ', bigMoney(returned), `${num(state.incomingData?.returns?.linkedToSaleCount || 0)} vínculos confirmados`, 'document', false, 'devolucoes')}${kpi('Compras financeiras', bigMoney(purchases), 'Entradas com efeito financeiro · não são receita', 'box', false, 'entradas')}${kpi('Canceladas', bigMoney(data.canceledValue || 0), `${num(data.canceledCount || 0)} NF-e destacadas`, 'document', false, 'canceladas')}</section>` +
     fiscalEventCards(data, state.incomingData) +
     `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Fiscal × itens financeiros por dia', 'Emissão por data da NF-e · azul: valor fiscal · verde: itens com CFOP financeiro')}<div class="nfe-chart-switch"><button data-chart-mode="value" class="${mode === 'value' ? 'active' : ''}">Valor</button><button data-chart-mode="count" class="${mode === 'count' ? 'active' : ''}">Quantidade</button></div>${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor fiscal e itens financeiros por dia">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(maximum * part)}" y2="${y(maximum * part)}" stroke="#e4e5e9"/><text x="44" y="${y(maximum * part) + 4}" text-anchor="end">${mode === 'value' ? short(maximum * part) : num(maximum * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${mode === 'value' ? `<path d="${financialPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[metric])}" r="3" fill="var(--accent)"><title>${date(row.date)} · fiscal ${money(row.value)} · financeiro ${money(row.saleValue || 0)}</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem notas neste período.')}</article><article class="panel nfe-companies">${panelHead('XMLs por empresa', 'Itens financeiros e valor fiscal das NF-e autorizadas')}${data.companies.length ? data.companies.map((company) => `<div class="nfe-company"><div><strong>${esc(company.name)}</strong><span>Itens financeiros líquidos ${money((company.saleValue || 0) - (returnedByCompany.get(company.name) || 0))} · Fiscal ${money(company.value)} · ${num(company.count)} NF-e</span></div><div class="nfe-bar"><span style="width:${(company.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma empresa com notas no período.')}</article></div>` +
@@ -2126,7 +2130,7 @@ document.addEventListener('click', (e) => {
   }
   if (e.target.closest('[data-display-next], [data-display-prev]')) {
     state.mostradorSlide =
-      (state.mostradorSlide + (e.target.closest('[data-display-next]') ? 1 : 3)) % 4;
+      (state.mostradorSlide + (e.target.closest('[data-display-next]') ? 1 : 4)) % 5;
     paintMostrador();
     return;
   }
@@ -2480,10 +2484,10 @@ setInterval(() => {
     !display?.matches(':hover') &&
     !display?.matches(':focus-within')
   ) {
-    state.mostradorSlide = (state.mostradorSlide + 1) % 4;
+    state.mostradorSlide = (state.mostradorSlide + 1) % 5;
     paintMostrador();
   }
-}, 15000);
+}, 20000);
 setInterval(() => {
   if (state.view === 'mostrador' && !document.hidden && !state.paused) load(true);
 }, 60000);

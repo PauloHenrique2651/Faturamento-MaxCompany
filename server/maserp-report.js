@@ -8,9 +8,15 @@ let poolPromise;
 function databaseSettings() {
   let saved = {};
   try {
-    const text = readFileSync(process.env.MASERP_CONFIG_PATH || defaultConfigPath, 'utf8').replace(/^\uFEFF/, '');
+    const text = readFileSync(process.env.MASERP_CONFIG_PATH || defaultConfigPath, 'utf8').replace(
+      /^\uFEFF/,
+      ''
+    );
     const setting = text.split(/\r?\n/).find((line) => /^\s*SQL_SERVER\s*=/i.test(line));
-    const fields = setting?.split('=', 2)[1]?.split(';').map((field) => field.trim());
+    const fields = setting
+      ?.split('=', 2)[1]
+      ?.split(';')
+      .map((field) => field.trim());
     if (fields?.length >= 4) [saved.server, saved.database, saved.user, saved.password] = fields;
   } catch {
     // Environment variables can configure MASERP without a local Falco config file.
@@ -30,7 +36,8 @@ function databaseSettings() {
     pool: { min: 0, max: 2, idleTimeoutMillis: 10000 },
     options: {
       encrypt: String(process.env.MASERP_SQL_ENCRYPT || 'false').toLowerCase() === 'true',
-      trustServerCertificate: String(process.env.MASERP_SQL_TRUST_CERT || 'true').toLowerCase() === 'true',
+      trustServerCertificate:
+        String(process.env.MASERP_SQL_TRUST_CERT || 'true').toLowerCase() === 'true',
       appName: 'CRM MASERP leitura',
       readOnlyIntent: true,
       enableArithAbort: true
@@ -84,6 +91,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
           CONVERT(decimal(18,2), ISNULL(i.ite_quantidade_NM,0) * (ISNULL(i.ite_preco_MN,0) - ISNULL(i.ite_lucro_MN,0))) sale_cost,
           ISNULL(i.ite_produtosemgiro_BT,0) without_rotation,
           billed.cost_unit,
+          billed.invoice_linked,
           CONVERT(decimal(18,2), ISNULL(i.ite_quantidade_NM,0) * ISNULL(billed.cost_unit,0)) billed_cost
         FROM pedido_T p
         INNER JOIN itenspedido_T i ON i.emp_empresa_IN=p.emp_empresa_IN
@@ -91,7 +99,8 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         INNER JOIN configuracaoentradasaida_T operation ON operation.ces_codigo_IN=p.ped_configuracaoentradasaida_IN
         LEFT JOIN clientejuridica customer ON customer.cli_codigo=p.cli_cliente_IN
         OUTER APPLY (
-          SELECT TOP 1 item_invoice.ite_customediobrutoporitem_MN cost_unit
+          SELECT TOP 1 item_invoice.ite_customediobrutoporitem_MN cost_unit,
+            CONVERT(bit,1) invoice_linked
           FROM itensnotafiscalsaida_T_itenspedidovenda_T link
           INNER JOIN notafiscalsaida_T invoice ON invoice.emp_empresa_IN=link.inp_empresanotafiscal_IN
             AND invoice.not_numero_IN=link.inp_notafiscalsaida_IN
@@ -122,10 +131,11 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         SUM(sale_cost) sales_cost,
         SUM(CASE WHEN without_rotation=0 THEN sale_value ELSE 0 END) sales_with_rotation,
         SUM(CASE WHEN without_rotation=1 THEN sale_value ELSE 0 END) sales_without_rotation,
-        SUM(CASE WHEN cost_unit IS NOT NULL THEN sale_value ELSE 0 END) billed_value,
-        SUM(CASE WHEN cost_unit IS NOT NULL THEN billed_cost ELSE 0 END) billed_cost,
-        SUM(CASE WHEN cost_unit IS NOT NULL AND without_rotation=0 THEN sale_value ELSE 0 END) billed_with_rotation,
-        SUM(CASE WHEN cost_unit IS NOT NULL AND without_rotation=1 THEN sale_value ELSE 0 END) billed_without_rotation
+        SUM(CASE WHEN invoice_linked=1 THEN sale_value ELSE 0 END) billed_value,
+        SUM(CASE WHEN invoice_linked=1 AND cost_unit IS NOT NULL THEN sale_value ELSE 0 END) billed_cost_coverage,
+        SUM(CASE WHEN invoice_linked=1 AND cost_unit IS NOT NULL THEN billed_cost ELSE 0 END) billed_cost,
+        SUM(CASE WHEN invoice_linked=1 AND without_rotation=0 THEN sale_value ELSE 0 END) billed_with_rotation,
+        SUM(CASE WHEN invoice_linked=1 AND without_rotation=1 THEN sale_value ELSE 0 END) billed_without_rotation
       FROM commercial_lines
       GROUP BY company_code
     `);
@@ -150,6 +160,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         salesWithRotation: Number(row.sales_with_rotation || 0),
         salesWithoutRotation: Number(row.sales_without_rotation || 0),
         billed: Number(row.billed_value || 0),
+        billedCostCoverage: Number(row.billed_cost_coverage || 0),
         billedCost: Number(row.billed_cost || 0),
         billedWithRotation: Number(row.billed_with_rotation || 0),
         billedWithoutRotation: Number(row.billed_without_rotation || 0)

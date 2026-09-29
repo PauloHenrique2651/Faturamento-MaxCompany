@@ -186,6 +186,10 @@ body[data-view='mostrador'] #page {
   grid-template-columns: minmax(0, 1.55fr) minmax(270px, 0.75fr);
   gap: 12px;
 }
+.display-summary {
+  grid-template-columns: minmax(0, 1.3fr) minmax(310px, 0.8fr);
+  align-items: stretch;
+}
 .display-hero,
 .display-goal,
 .display-metric,
@@ -256,6 +260,117 @@ body[data-view='mostrador'] #page {
   margin-top: 4px;
   color: var(--display-muted);
   font-size: clamp(9px, 0.65vw, 13px);
+}
+.display-profit-card {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(18px, 1.8vw, 34px);
+  border: 1px solid rgba(228, 173, 84, 0.34);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(62, 56, 42, 0.72), rgba(19, 43, 58, 0.9));
+  box-shadow: 0 18px 45px rgba(0, 11, 23, 0.16);
+}
+.display-profit-card > strong {
+  display: block;
+  margin: 16px 0 10px;
+  color: #f6d495;
+  font-size: clamp(34px, 3.5vw, 70px);
+  line-height: 1.08;
+  letter-spacing: -0.05em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.display-profit-card > strong.display-no-profit {
+  font-size: clamp(22px, 2.1vw, 40px);
+}
+.display-profit-card p,
+.display-profit-card > small {
+  display: block;
+  color: #c2d1dc;
+  font-size: clamp(10px, 0.73vw, 14px);
+  line-height: 1.55;
+  margin: 8px 0 0;
+}
+.display-profit-rate {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--display-muted);
+}
+.display-profit-rate b {
+  color: #f6d495;
+  font-size: clamp(17px, 1.4vw, 26px);
+  font-variant-numeric: tabular-nums;
+}
+.display-cost-coverage {
+  height: 7px;
+  margin: 14px 0 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(236, 244, 249, 0.13);
+}
+.display-cost-coverage i {
+  display: block;
+  width: var(--coverage);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d69b3e, #f3d294);
+  transform-origin: left;
+  animation: display-grow-x 800ms 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.display-lower-summary {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.52fr) minmax(0, 1.48fr);
+  gap: 12px;
+  align-items: stretch;
+}
+.display-lower-summary .display-goal {
+  min-width: 0;
+}
+.display-goal > small {
+  display: block;
+  color: var(--display-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.display-fiscal-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  padding: clamp(15px, 1.5vw, 28px);
+  border: 1px solid var(--display-line);
+  border-radius: 18px;
+  background: rgba(18, 47, 70, 0.6);
+}
+.display-fiscal-summary > div {
+  min-width: 0;
+  padding: 6px 10px;
+  border-right: 1px solid var(--display-line);
+}
+.display-fiscal-summary > div:last-child {
+  border-right: 0;
+}
+.display-fiscal-summary span,
+.display-fiscal-summary small {
+  display: block;
+  color: var(--display-muted);
+  font-size: clamp(9px, 0.7vw, 13px);
+}
+.display-fiscal-summary strong {
+  display: block;
+  margin: 7px 0 4px;
+  color: #f5f9fc;
+  font-size: clamp(16px, 1.45vw, 28px);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.display-fiscal-summary .deduction strong {
+  color: #f1c778;
+}
+.display-fiscal-summary .net strong {
+  color: #8ed8bd;
 }
 .display-goal {
   padding: clamp(18px, 1.7vw, 35px);
@@ -668,7 +783,7 @@ body[data-view='mostrador'] #page {
   background: linear-gradient(90deg, #7ebce0, #d5f2ff);
   transform: scaleX(0);
   transform-origin: left;
-  animation: display-cycle 15s linear infinite;
+  animation: display-cycle 20s linear infinite;
 }
 .display-rotation span {
   position: relative;
@@ -851,6 +966,12 @@ body[data-view='metas'] .mobile-filter-trigger {
   .display-overview {
     grid-template-columns: 1fr 1fr;
   }
+  .display-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .display-lower-summary {
+    grid-template-columns: 1fr;
+  }
   .display-metrics {
     grid-template-columns: repeat(3, 1fr);
   }
@@ -908,6 +1029,21 @@ body[data-view='metas'] .mobile-filter-trigger {
   .display-overview {
     grid-template-columns: 1fr;
   }
+  .display-fiscal-summary {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .display-fiscal-summary > div {
+    padding: 12px 2px;
+    border-right: 0;
+    border-bottom: 1px solid var(--display-line);
+  }
+  .display-fiscal-summary > div:last-child {
+    border-bottom: 0;
+  }
+  .display-profit-card > strong {
+    font-size: clamp(34px, 9vw, 58px);
+  }
   .display-metrics {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -953,7 +1089,7 @@ body[data-view='metas'] .mobile-filter-trigger {
   }
   .display-footer nav {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
   .display-footer nav button span {
     display: none;

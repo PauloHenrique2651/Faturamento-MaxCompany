@@ -20,7 +20,7 @@ const periods = [
   ['quarter', 'Trimestre'],
   ['year', 'Ano']
 ];
-const slides = ['Visão geral', 'Vendedores', 'Clientes e produtos', 'Critérios'];
+const slides = ['Resumo', 'Evolução', 'Vendedores', 'Clientes e produtos', 'Critérios'];
 
 function link(view, params, changes = {}) {
   const query = new URLSearchParams(params);
@@ -75,6 +75,7 @@ function falcoMetrics(outgoing, selectedCompany) {
   const salesCost = sum(commercial, 'salesCost');
   const billed = sum(commercial, 'billed');
   const billedCost = sum(commercial, 'billedCost');
+  const billedCostCoverage = sum(commercial, 'billedCostCoverage');
   const gross = sum(invoices, 'gross');
   const returned = sum(invoices, 'returned');
   return {
@@ -85,7 +86,10 @@ function falcoMetrics(outgoing, selectedCompany) {
     net: gross - returned,
     invoices: sum(invoices, 'count'),
     orders: sum(commercial, 'orders'),
-    billedMarkup: billedCost ? ((billed - billedCost) / billedCost) * 100 : null,
+    billedCostCoverage,
+    billedProfit: billedCostCoverage - billedCost,
+    billedCoveragePct: billed ? (billedCostCoverage / billed) * 100 : null,
+    billedMarkup: billedCost ? ((billedCostCoverage - billedCost) / billedCost) * 100 : null,
     salesMarkup: salesCost ? ((sales - salesCost) / salesCost) * 100 : null
   };
 }
@@ -141,6 +145,7 @@ function dailyRhythmChart(daily) {
     top = 32,
     bottom = 210;
   const values = daily.map((row) => Math.max(0, Number(row.sales || 0)));
+  const peak = Math.max(0, ...values);
   const maximum = Math.max(1, ...values);
   const average = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
   const step = (right - left) / Math.max(1, values.length);
@@ -154,9 +159,9 @@ function dailyRhythmChart(daily) {
       return `<rect class="rhythm-bar" style="--i:${index}" x="${x.toFixed(1)}" y="${(bottom - barHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" tabindex="0" aria-label="${esc(row.date)}: ${esc(money(row.sales))} em vendas"><title>${esc(row.date)} · vendas ${esc(money(row.sales))} · devoluções ${esc(money(row.returns))}</title></rect>`;
     })
     .join('');
-  const bestIndex = values.indexOf(maximum);
+  const bestIndex = values.indexOf(peak);
   const last = daily.at(-1);
-  return `<div class="display-chart-head compact"><div><span class="display-eyebrow">PULSO DIÁRIO</span><h2>Vendas por emissão</h2></div><strong>${shortMoney(average)}<small>/ dia corrido</small></strong></div><svg class="display-chart rhythm-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="rhythm-title rhythm-description"><title id="rhythm-title">Vendas financeiras por dia de emissão</title><desc id="rhythm-description">Média diária de ${esc(money(average))}. Melhor dia ${esc(daily[bestIndex].date)} com ${esc(money(maximum))}.</desc><line class="average-line" x1="${left}" x2="${right}" y1="${y(average)}" y2="${y(average)}"/><text class="average-label" x="${right}" y="${y(average) - 7}" text-anchor="end">média ${esc(shortMoney(average))}</text>${bars}<text x="${left}" y="${height - 10}">${esc(daily[0].date.slice(8) + '/' + daily[0].date.slice(5, 7))}</text><text x="${right}" y="${height - 10}" text-anchor="end">${esc(last.date.slice(8) + '/' + last.date.slice(5, 7))}</text></svg><p class="display-chart-note">Pico de vendas em <strong>${esc(daily[bestIndex].date.slice(8) + '/' + daily[bestIndex].date.slice(5, 7))}</strong> · ${esc(shortMoney(maximum))}</p>`;
+  return `<div class="display-chart-head compact"><div><span class="display-eyebrow">PULSO DIÁRIO</span><h2>Vendas por emissão</h2></div><strong>${shortMoney(average)}<small>/ dia corrido</small></strong></div><svg class="display-chart rhythm-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="rhythm-title rhythm-description"><title id="rhythm-title">Vendas financeiras por dia de emissão</title><desc id="rhythm-description">Média diária de ${esc(money(average))}. Melhor dia ${esc(daily[bestIndex].date)} com ${esc(money(peak))}.</desc><line class="average-line" x1="${left}" x2="${right}" y1="${y(average)}" y2="${y(average)}"/><text class="average-label" x="${right}" y="${y(average) - 7}" text-anchor="end">média ${esc(shortMoney(average))}</text>${bars}<text x="${left}" y="${height - 10}">${esc(daily[0].date.slice(8) + '/' + daily[0].date.slice(5, 7))}</text><text x="${right}" y="${height - 10}" text-anchor="end">${esc(last.date.slice(8) + '/' + last.date.slice(5, 7))}</text></svg><p class="display-chart-note">Pico de vendas em <strong>${esc(daily[bestIndex].date.slice(8) + '/' + daily[bestIndex].date.slice(5, 7))}</strong> · ${esc(shortMoney(peak))}</p>`;
 }
 
 function sellerRows(sellers, sort, params, limit = 10) {
@@ -226,17 +231,42 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
         : 'Abaixo do ritmo necessário';
   const ranking = sellerRows(result.sellers, sort, params);
   const heroValue = falco?.billed ?? result.net;
-  const heroLabel = falco ? 'FATURADO NO FALCO' : 'FATURAMENTO LÍQUIDO DOCUMENTADO';
+  const heroLabel = falco ? 'FATURAMENTO VINCULADO A PEDIDOS' : 'FATURAMENTO LÍQUIDO DOCUMENTADO';
   const heroDescription = falco
-    ? 'Pedidos já vinculados a notas no relatório de Vendas e Faturamento.'
-    : 'NF-e de venda autorizadas menos devoluções recebidas vinculadas às vendas.';
+    ? 'Valor dos pedidos que já possuem vínculo com NF-e no relatório comercial do Falco.'
+    : 'NF-e de venda autorizadas menos devoluções recebidas com vínculo confirmado.';
+  const profitMarkup =
+    falco?.billedMarkup === null || falco?.billedMarkup === undefined
+      ? '—'
+      : `${number(falco.billedMarkup)}%`;
+  const costCoverage =
+    falco?.billedCoveragePct === null || falco?.billedCoveragePct === undefined
+      ? 'Sem cobertura calculável'
+      : `${number(falco.billedCoveragePct)}% do faturamento com custo informado`;
+  const ticket = falco?.invoices
+    ? money(falco.gross / falco.invoices)
+    : result.sellers.length || outgoing?.operations?.length
+      ? money(
+          result.gross /
+            Math.max(1, outgoing?.operations?.find((row) => row.type === 'sale')?.count || 0)
+        )
+      : '—';
   const html = `<div class="display-shell ${options.paused ? 'is-paused' : ''}">
     <header class="display-header"><div class="display-identity"><img src="${company.logo}" alt=""/><div><span>GRUPO MAXCOMPANY</span><strong>Performance comercial</strong><small>${esc(company.name)} · ${esc(period.label)}</small></div></div><div class="display-status ${fresh ? 'fresh' : 'stale'}"><span class="display-status-dot"></span><div><strong>${status}</strong><small>Última sincronização ${esc(stamp(checked))}</small></div></div><div class="display-clock" id="display-clock"></div><div class="display-actions"><button type="button" data-display-fullscreen aria-label="Alternar tela cheia">Tela cheia</button><a href="#dashboard">Voltar ao CRM</a></div></header>
     <div class="display-controls"><div class="display-companies" role="group" aria-label="Empresa">${companies.map((row) => `<button type="button" data-display-company="${row.id}" class="${row.id === selectedCompany ? 'active' : ''}">${esc(row.name)}</button>`).join('')}</div><div class="display-periods" role="group" aria-label="Período">${periods.map(([id, label]) => `<button type="button" data-display-period="${id}" class="${id === periodKey ? 'active' : ''}">${label}</button>`).join('')}</div></div>
-    <section class="display-slide ${slide === 0 ? 'active' : ''}" data-slide="0"><div class="display-overview"><div class="display-hero"><span class="display-kicker">${heroLabel}</span><strong>${money(heroValue)}</strong><p>${heroDescription}</p><div class="display-hero-strip">${falco ? `<span>Venda em pedidos <b>${money(falco.sales)}</b><small>${number(falco.orders)} pedidos · markup ${falco.salesMarkup === null ? '—' : `${number(falco.salesMarkup)}%`}</small></span><span>NF-e emitidas <b>${money(falco.gross)}</b><small>${number(falco.invoices)} notas · saldo ${money(falco.net)}</small></span>` : `<span>Vendas faturadas <b>${money(result.gross)}</b></span><span>Devoluções confirmadas <b>${money(result.returned)}</b></span>`}</div></div><div class="display-goal"><span class="display-kicker">${esc(targetNote)}</span><strong>${targetValue}</strong>${result.target === null ? `<p>Defina a meta em Metas comerciais.</p><a href="#metas">Abrir metas</a>` : `<div class="display-progress"><i style="--progress:${Math.min(100, Math.max(0, result.progress))}%"></i></div><b>${number(result.progress)}% realizado</b><p>Faltam <strong>${money(result.gap)}</strong></p>`}</div></div><div class="display-metrics">${falco ? metric('Markup faturado', falco.billedMarkup === null ? '—' : `${number(falco.billedMarkup)}%`, 'Receita menos custo ÷ custo') : metric('Projeção de fechamento', result.projection === null ? 'Aguardando histórico' : money(result.projection), 'Estimativa pelo ritmo recente e pelos dias úteis')}${metric('Dias úteis restantes', String(result.remaining), 'Até o fim do período')}${metric('Ritmo fiscal', `${money(result.average)}/dia`, pace, result.requiredDaily !== null && result.average < result.requiredDaily ? 'attention' : '')}${metric('Necessário por dia', result.requiredDaily === null ? '—' : `${money(result.requiredDaily)}/dia`, result.target === null ? 'Meta não cadastrada' : 'Para atingir a meta')}${metric('Movimento hoje', money(result.today), 'Pela data de emissão da NF-e')}${metric('Ticket por NF-e', falco?.invoices ? money(falco.gross / falco.invoices) : result.sellers.length || outgoing?.operations?.length ? money(result.gross / Math.max(1, outgoing?.operations?.find((row) => row.type === 'sale')?.count || 0)) : '—', 'Valor fiscal ÷ NF-e emitidas')}</div><div class="display-chart-grid"><article class="display-chart-wrap">${cumulativeChart(result.daily)}</article><article class="display-chart-wrap rhythm-panel">${dailyRhythmChart(result.daily)}</article></div></section>
-    <section class="display-slide ${slide === 1 ? 'active' : ''}" data-slide="1"><div class="display-section-head"><div><span class="display-kicker">EQUIPE COMERCIAL</span><h1>Ranking de vendedores</h1><p>Vendas identificadas no XML; devoluções vinculadas são abatidas quando o vendedor original está no período.</p></div><div class="display-sort" role="group" aria-label="Ordenar ranking"><button data-display-sort="net" class="${sort === 'net' ? 'active' : ''}">Faturamento</button><button data-display-sort="goal" class="${sort === 'goal' ? 'active' : ''}">% da meta</button><button data-display-sort="ticket" class="${sort === 'ticket' ? 'active' : ''}">Ticket</button></div></div><div class="display-ranking">${ranking}</div><p class="display-footnote">${number(outgoing?.unattributedCount || 0)} NF-e de venda sem vendedor identificável. Metas individuais só aparecem após cadastro.</p></section>
-    <section class="display-slide ${slide === 2 ? 'active' : ''}" data-slide="2"><div class="display-section-head"><div><span class="display-kicker">CARTEIRA E MIX</span><h1>Quem impulsiona o resultado</h1></div></div><div class="display-double"><article><h2>Principais grupos de clientes</h2>${conciseRanking(result.topCustomers, params, 'clientes', 'grupoClienteNfe')}</article><article><h2>Produtos por valor bruto dos itens</h2>${conciseRanking(outgoing?.products || [], params, 'produtos', 'produtoNfe')}</article></div></section>
-    <section class="display-slide ${slide === 3 ? 'active' : ''}" data-slide="3"><div class="display-section-head"><div><span class="display-kicker">COMPOSIÇÃO</span><h1>Critério do resultado</h1></div></div><div class="display-reconciliation"><div><span>NF-e de venda autorizadas</span><strong>${money(result.gross)}</strong></div><div><span>Devoluções de clientes com vínculo confirmado</span><strong>− ${money(result.returned)}</strong></div><div class="total"><span>Faturamento líquido documentado</span><strong>${money(result.net)}</strong></div></div><div class="display-trust"><article><h2>Fatos verificados</h2><p>Vendas identificadas por CFOP. Cancelamentos excluídos das notas autorizadas. Devoluções abatidas somente com referência confirmada à venda.</p></article><article><h2>Custo, margem e markup</h2><p>Aguardam conciliação de custo por produto e estoque. Entradas da SEFAZ mostram compras e devoluções, mas não determinam o custo da unidade vendida.</p></article><article><h2>Atualização</h2><p>Última sincronização: ${esc(stamp(checked))}. A tela consulta o banco do CRM a cada minuto; o coletor fiscal atualiza os documentos separadamente.</p></article></div></section>
+    <section class="display-slide ${slide === 0 ? 'active' : ''}" data-slide="0">
+      <div class="display-overview display-summary">
+        <article class="display-hero display-primary-metric"><span class="display-kicker">${heroLabel}</span><strong>${money(heroValue)}</strong><p>${heroDescription}</p><div class="display-hero-strip">${falco ? `<span>Venda em pedidos <b>${money(falco.sales)}</b><small>${number(falco.orders)} pedidos · markup ${falco.salesMarkup === null ? '—' : `${number(falco.salesMarkup)}%`}</small></span><span>NF-e emitidas <b>${money(falco.gross)}</b><small>${number(falco.invoices)} notas · saldo fiscal ${money(falco.net)}</small></span>` : `<span>Vendas faturadas <b>${money(result.gross)}</b></span><span>Devoluções confirmadas <b>${money(result.returned)}</b></span>`}</div></article>
+        <article class="display-profit-card"><span class="display-kicker">RESULTADO COM CUSTO CONCILIADO</span>${falco && falco.billedCostCoverage > 0 ? `<strong>${money(falco.billedProfit)}</strong><div class="display-profit-rate"><span>Markup sobre custo</span><b>${profitMarkup}</b></div><div class="display-cost-coverage"><i style="--coverage:${Math.min(100, Math.max(0, falco.billedCoveragePct || 0))}%"></i></div><small>${costCoverage} · base de ${money(falco.billedCostCoverage)}</small><p>Faturamento e custo dos mesmos itens com custo unitário no Falco. Resultado bruto comercial; não representa lucro líquido contábil.</p>` : `<strong class="display-no-profit">Aguardando custo conciliado</strong><p>O Falco ainda não informou custo suficiente para calcular o resultado neste período.</p>`}</article>
+      </div>
+      <div class="display-lower-summary"><article class="display-goal"><span class="display-kicker">${esc(targetNote)}</span><strong>${targetValue}</strong>${result.target === null ? `<p>Defina a meta em Metas comerciais.</p><a href="#metas">Abrir metas</a>` : `<div class="display-progress"><i style="--progress:${Math.min(100, Math.max(0, result.progress))}%"></i></div><b>${number(result.progress)}% realizado</b><p>Faltam <strong>${money(result.gap)}</strong></p><small>Progresso pelo faturamento líquido documentado.</small>`}</article>
+        <div class="display-fiscal-summary"><div><span>NF-e autorizadas</span><strong>${money(falco?.gross ?? result.gross)}</strong><small>${falco ? `${number(falco.invoices)} documentos` : 'Vendas fiscais no período'}</small></div><div class="deduction"><span>Devoluções vinculadas</span><strong>− ${money(falco?.returned ?? result.returned)}</strong><small>Com vínculo confirmado</small></div><div class="net"><span>Saldo fiscal documentado</span><strong>${money(falco?.net ?? result.net)}</strong><small>Antes de ajustes contábeis</small></div></div>
+      </div>
+    </section>
+    <section class="display-slide ${slide === 1 ? 'active' : ''}" data-slide="1"><div class="display-section-head"><div><span class="display-kicker">RITMO E TENDÊNCIA</span><h1>Evolução do período</h1><p>Valores fiscais por data de emissão. Confira o horário da última sincronização no cabeçalho.</p></div></div><div class="display-metrics">${metric('Projeção de fechamento', result.projection === null ? 'Aguardando histórico' : money(result.projection), 'Estimativa pelo ritmo recente e dias úteis')}${metric('Dias úteis restantes', String(result.remaining), 'Até o fim do período')}${metric('Ritmo fiscal médio', `${money(result.average)}/dia`, pace, result.requiredDaily !== null && result.average < result.requiredDaily ? 'attention' : '')}${metric('Necessário por dia', result.requiredDaily === null ? '—' : `${money(result.requiredDaily)}/dia`, result.target === null ? 'Meta não cadastrada' : 'Para atingir a meta')}${metric('Movimento hoje', money(result.today), 'Pela data de emissão da NF-e')}${metric('Ticket médio fiscal', ticket, 'Valor fiscal ÷ quantidade de NF-e')}</div><div class="display-chart-grid"><article class="display-chart-wrap">${cumulativeChart(result.daily)}</article><article class="display-chart-wrap rhythm-panel">${dailyRhythmChart(result.daily)}</article></div></section>
+    <section class="display-slide ${slide === 2 ? 'active' : ''}" data-slide="2"><div class="display-section-head"><div><span class="display-kicker">EQUIPE COMERCIAL</span><h1>Ranking de vendedores</h1><p>Vendas identificadas nos XMLs; devoluções abatidas quando vinculadas à venda original.</p></div><div class="display-sort" role="group" aria-label="Ordenar ranking"><button data-display-sort="net" class="${sort === 'net' ? 'active' : ''}">Faturamento</button><button data-display-sort="goal" class="${sort === 'goal' ? 'active' : ''}">% da meta</button><button data-display-sort="ticket" class="${sort === 'ticket' ? 'active' : ''}">Ticket</button></div></div><div class="display-ranking">${ranking}</div><p class="display-footnote">${number(outgoing?.unattributedCount || 0)} NF-e de venda sem vendedor identificável. Metas individuais aparecem após cadastro.</p></section>
+    <section class="display-slide ${slide === 3 ? 'active' : ''}" data-slide="3"><div class="display-section-head"><div><span class="display-kicker">CARTEIRA E MIX</span><h1>Clientes e produtos</h1><p>Maiores valores documentados no período.</p></div></div><div class="display-double"><article><h2>Principais grupos de clientes</h2>${conciseRanking(result.topCustomers, params, 'clientes', 'grupoClienteNfe')}</article><article><h2>Produtos por valor bruto dos itens</h2>${conciseRanking(outgoing?.products || [], params, 'produtos', 'produtoNfe')}</article></div></section>
+    <section class="display-slide ${slide === 4 ? 'active' : ''}" data-slide="4"><div class="display-section-head"><div><span class="display-kicker">COMPOSIÇÃO E FONTES</span><h1>Critérios dos indicadores</h1></div></div><div class="display-reconciliation"><div><span>NF-e de venda autorizadas</span><strong>${money(result.gross)}</strong></div><div><span>Devoluções de clientes com vínculo confirmado</span><strong>− ${money(result.returned)}</strong></div><div class="total"><span>Faturamento líquido documentado</span><strong>${money(result.net)}</strong></div></div><div class="display-trust"><article><h2>Faturamento</h2><p>Vendas identificadas por CFOP. Cancelamentos são excluídos das notas autorizadas; devoluções reduzem o total somente com referência confirmada.</p></article><article><h2>Resultado comercial</h2><p>Calculado apenas nos itens faturados com custo unitário informado. O percentual é markup sobre custo; não representa margem líquida nem substitui o relatório contábil.</p></article><article><h2>Atualização</h2><p>Última sincronização: ${esc(stamp(checked))}. O mostrador consulta o CRM a cada minuto; as pastas fiscais e a SEFAZ seguem a cadência própria dos coletores.</p></article></div></section>
     <footer class="display-footer"><nav aria-label="Telas do mostrador">${slides.map((name, index) => `<button type="button" data-display-slide="${index}" class="${index === slide ? 'active' : ''}" aria-label="${esc(name)}">${String(index + 1).padStart(2, '0')} <span>${esc(name)}</span></button>`).join('')}</nav><div class="display-rotation" aria-hidden="true"><i></i><span>${options.paused ? 'PAUSADO' : 'PRÓXIMA TELA'}</span></div><div><button type="button" data-display-prev aria-label="Tela anterior">Anterior</button><button type="button" data-display-pause>${options.paused ? 'Retomar' : 'Pausar'} rotação</button><button type="button" data-display-next aria-label="Próxima tela">Próxima</button></div></footer>
   </div>`;
   const signature = JSON.stringify({
@@ -247,7 +277,14 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
     paused: options.paused,
     target: result.target,
     net: result.net,
-    falco: falco && [falco.sales, falco.billed, falco.gross, falco.returned],
+    falco: falco && [
+      falco.sales,
+      falco.billed,
+      falco.billedProfit,
+      falco.billedCostCoverage,
+      falco.gross,
+      falco.returned
+    ],
     returned: result.returned,
     sellers: result.sellers.map((row) => [row.key, row.net, row.target]),
     customers: result.topCustomers.map((row) => [row.id, row.value]),
