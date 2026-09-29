@@ -303,6 +303,31 @@ body[data-view='mostrador'] #page {
   font-size: clamp(17px, 1.4vw, 26px);
   font-variant-numeric: tabular-nums;
 }
+.display-profit-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(246, 212, 149, 0.2);
+}
+.display-profit-details span {
+  min-width: 0;
+}
+.display-profit-details small {
+  display: block;
+  color: var(--display-muted);
+  font-size: clamp(9px, 0.68vw, 13px);
+  line-height: 1.35;
+}
+.display-profit-details b {
+  display: block;
+  margin-top: 3px;
+  color: #fff;
+  font-size: clamp(14px, 1.1vw, 21px);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
 .display-cost-coverage {
   height: 7px;
   margin: 14px 0 7px;

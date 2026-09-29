@@ -139,11 +139,50 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       FROM commercial_lines
       GROUP BY company_code
     `);
+    const profitabilityRequest = pool.request();
+    profitabilityRequest.input('empresa_VC', sql.VarChar(sql.MAX), companyCodes.join(','));
+    profitabilityRequest.input('cliente_IN', sql.Int, null);
+    profitabilityRequest.input('numero_IN', sql.Int, null);
+    profitabilityRequest.input('datainicio_DT', sql.DateTime, new Date(`${startDate}T00:00:00`));
+    profitabilityRequest.input('datafinal_DT', sql.DateTime, new Date(`${endDate}T23:59:59`));
+    profitabilityRequest.input('retirarempresasdogrupo_BT', sql.Bit, true);
+    profitabilityRequest.input('produto_IN', sql.Int, null);
+    profitabilityRequest.input('NotasFiscais_BT', sql.Bit, true);
+    profitabilityRequest.input('CupomFiscal_BT', sql.Bit, false);
+    profitabilityRequest.input('NotaFiscalConsumidorEletronica_BT', sql.Bit, false);
+    const profitabilityResult = await profitabilityRequest.execute(
+      'dbo.usp_SelecionarDadosParaRelatorioLucratividade'
+    );
     const invoiceRows = result.recordsets[0] || [];
     const commercialRows = result.recordsets[1] || [];
+    const profitabilityInvoices = profitabilityResult.recordsets?.[1] || [];
+    const profitabilityByCompany = new Map();
+    for (const row of profitabilityInvoices) {
+      const companyCode = Number(row.emp_empresa_IN);
+      const current = profitabilityByCompany.get(companyCode) || {
+        companyCode,
+        count: 0,
+        gross: 0,
+        net: 0,
+        cost: 0,
+        profit: 0,
+        returned: 0,
+        expenses: 0
+      };
+      const net = Number(row.not_total_MN || 0);
+      const returned = Number(row.not_valordevolvido_MN || 0);
+      current.count += 1;
+      current.gross += net + returned;
+      current.net += net;
+      current.cost += Number(row.not_totalcusto_MN || 0);
+      current.profit += Number(row.not_lucro_MN || 0);
+      current.returned += returned;
+      current.expenses += Number(row.not_totaloutrasdespesas_MN || 0);
+      profitabilityByCompany.set(companyCode, current);
+    }
     return {
       available: true,
-      source: 'MASERP · relatórios de vendas, faturamento e notas emitidas',
+      source: 'MASERP · vendas, faturamento, notas emitidas e lucratividade',
       startDate,
       endDate,
       companies: invoiceRows.map((row) => ({
@@ -164,7 +203,8 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         billedCost: Number(row.billed_cost || 0),
         billedWithRotation: Number(row.billed_with_rotation || 0),
         billedWithoutRotation: Number(row.billed_without_rotation || 0)
-      }))
+      })),
+      profitability: [...profitabilityByCompany.values()]
     };
   } catch {
     poolPromise = undefined;
