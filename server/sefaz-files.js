@@ -13,11 +13,12 @@ const root =
   join(fileURLToPath(new URL('..', import.meta.url)), 'data', 'sefaz');
 const falcoImportRoot =
   process.env.FALCO_INCOMING_XML_PATH || '\\\\maxcompany\\DEPLOY\\NotasFiscaisEntradaImportacaoXML';
+const falcoNfeRoot = process.env.FALCO_NFE_PATH || '\\\\maxcompany\\DEPLOY\\NFE';
 const companies = [
-  [1, 'MaxPlast', '0170', '09562800000170'],
-  [2, 'MaxSafety', '0141', '16851383000141'],
-  [3, 'MaxSupply', '0145', '52748863000145'],
-  [4, 'MaxSupply · Filial ES', '0226', '52748863000226']
+  [1, 'MaxPlast', '0170', '09562800000170', 'Maxplast'],
+  [2, 'MaxSafety', '0141', '16851383000141', 'Maxsafety'],
+  [3, 'MaxSupply', '0145', '52748863000145', 'Maxsupply'],
+  [4, 'MaxSupply · Filial ES', '0226', '52748863000226', 'Maxsupply_FilialES']
 ];
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -78,10 +79,18 @@ export async function readIncomingSyncStatus() {
     // O endpoint de saúde informa indisponibilidade sem expor caminhos locais.
   }
   return Promise.all(
-    companies.map(async ([id, name, suffix]) => {
+    companies.map(async ([id, name, suffix, , nfeSuffix]) => {
       const folder = directories.find((entry) => entry.endsWith(suffix));
       if (!folder)
-        return { id, name, available: false, updatedAt: null, nextAllowedAt: null, status: null };
+        return {
+          id,
+          name,
+          available: false,
+          updatedAt: null,
+          nextAllowedAt: null,
+          status: null,
+          cancellationEvents: await cancellationEventCount(nfeSuffix)
+        };
       try {
         const state = JSON.parse(
           (await readFile(join(root, folder, 'state.json'), 'utf8')).replace(/^\uFEFF/, '')
@@ -93,6 +102,7 @@ export async function readIncomingSyncStatus() {
           updatedAt: state.UpdatedAt || null,
           nextAllowedAt: state.NextAllowedAt || null,
           status: state.LastStatus || null,
+          cancellationEvents: await cancellationEventCount(nfeSuffix),
           error: state.LastError
             ? 'Consulta SEFAZ indisponível. Verifique o coletor e o certificado.'
             : null,
@@ -103,6 +113,36 @@ export async function readIncomingSyncStatus() {
       }
     })
   );
+}
+
+async function cancellationEventFiles(id, name, nfeSuffix) {
+  try {
+    const folder = join(falcoNfeRoot, `XmlCancelamentoDestinatario_${nfeSuffix}`);
+    const entries = await readdir(folder, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && /^\d{44}-caneve\.xml$/i.test(entry.name))
+      .map((entry) => ({
+        path: join(folder, entry.name),
+        companyCnpj: companies.find((company) => company[0] === id)[3],
+        company: name,
+        id,
+        source: 'falco-cancellation-event'
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function cancellationEventCount(nfeSuffix) {
+  try {
+    const entries = await readdir(join(falcoNfeRoot, `XmlCancelamentoDestinatario_${nfeSuffix}`), {
+      withFileTypes: true
+    });
+    return entries.filter((entry) => entry.isFile() && /^\d{44}-caneve\.xml$/i.test(entry.name))
+      .length;
+  } catch {
+    return 0;
+  }
 }
 
 export async function readIncomingDocument(companyId, key) {
@@ -271,6 +311,8 @@ async function fullSearchCatalog() {
             files.push({ path: join(folder, name), companyCnpj: directory.name, company, id });
         }
       }
+      for (const [id, company, , , nfeSuffix] of companies)
+        files.push(...(await cancellationEventFiles(id, company, nfeSuffix)));
       files.push(...(await importedFiles()));
       const parsed = await mapLimited(files, 16, (file) => parsedFile(file.path, file.companyCnpj));
       const invoices = new Map();
@@ -337,8 +379,10 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
   let available = 0;
   const files = [];
   const sync = [];
-  for (const [id, name, suffix] of companies) {
+  for (const [id, name, suffix, , nfeSuffix] of companies) {
     if (companyId !== null && id !== companyId) continue;
+    const eventFiles = await cancellationEventFiles(id, name, nfeSuffix);
+    files.push(...eventFiles);
     let directory;
     try {
       const entries = await readdir(root, { withFileTypes: true });
@@ -347,7 +391,11 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
       directory = null;
     }
     if (!directory) {
-      sync.push({ name, available: false });
+      sync.push({
+        name,
+        available: false,
+        cancellationEvents: eventFiles.length
+      });
       continue;
     }
     available++;
@@ -370,6 +418,7 @@ export async function readIncomingSummary(inicio, fim, companyId = null) {
       name,
       available: true,
       documents: names.length,
+      cancellationEvents: eventFiles.length,
       updatedAt: state.UpdatedAt || null,
       status: state.LastStatus || null,
       nextAllowedAt: state.NextAllowedAt || null
