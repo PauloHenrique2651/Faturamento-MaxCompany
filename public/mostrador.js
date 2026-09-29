@@ -281,11 +281,8 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
         ? 'Acima do ritmo necessário'
         : 'Abaixo do ritmo necessário';
   const ranking = sellerRows(result.sellers, sort, params, falco?.sellerProfitability);
-  const heroValue = falco?.billed ?? result.net;
-  const heroLabel = falco ? 'FATURAMENTO VINCULADO A PEDIDOS' : 'FATURAMENTO LÍQUIDO DOCUMENTADO';
-  const heroDescription = falco
-    ? 'Valor dos pedidos que já possuem vínculo com NF-e no relatório comercial do Falco.'
-    : 'NF-e de venda autorizadas menos devoluções recebidas com vínculo confirmado.';
+  const purchased = Number(incoming?.purchaseValue || 0);
+  const purchaseCount = Number(incoming?.purchaseCount || 0);
   const profitMarkup =
     falco?.profitabilityMarkup === null || falco?.profitabilityMarkup === undefined
       ? '—'
@@ -303,7 +300,7 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
     <div class="display-controls"><div class="display-companies" role="group" aria-label="Empresa">${companies.map((row) => `<button type="button" data-display-company="${row.id}" class="${row.id === selectedCompany ? 'active' : ''}">${esc(row.name)}</button>`).join('')}</div><div class="display-periods" role="group" aria-label="Período">${periods.map(([id, label]) => `<button type="button" data-display-period="${id}" class="${id === periodKey ? 'active' : ''}">${label}</button>`).join('')}</div></div>
     <section class="display-slide ${slide === 0 ? 'active' : ''}" data-slide="0">
       <div class="display-overview display-summary">
-        <article class="display-hero display-primary-metric"><span class="display-kicker">${heroLabel}</span><strong>${money(heroValue)}</strong><p>${heroDescription}</p><div class="display-hero-strip">${falco ? `<span>Venda em pedidos <b>${money(falco.sales)}</b><small>${number(falco.orders)} pedidos · markup ${falco.salesMarkup === null ? '—' : `${number(falco.salesMarkup)}%`}</small></span><span>NF-e emitidas <b>${money(falco.gross)}</b><small>${number(falco.invoices)} notas · saldo fiscal ${money(falco.net)}</small></span>` : `<span>Vendas faturadas <b>${money(result.gross)}</b></span><span>Devoluções confirmadas <b>${money(result.returned)}</b></span>`}</div></article>
+        <article class="display-hero display-commercial-panel"><span class="display-kicker">MOVIMENTO COMERCIAL</span><h1>Pedidos, faturamento e compras</h1><p>Cada valor mantém sua própria base para uma leitura direta do período.</p><div class="display-commercial-flow"><a class="display-flow-card orders" href="${esc(link('faturamento', params))}"><span>Em pedidos</span><b>${money(falco?.sales ?? result.gross)}</b><small>${falco ? `${number(falco.orders)} pedidos registrados · markup ${number(falco.salesMarkup)}%` : 'Vendas documentadas no período'}</small></a><a class="display-flow-card billed" href="${esc(link('faturamento', params))}"><span>Já faturado</span><b>${money(falco?.billed ?? result.net)}</b><small>${falco ? 'Pedidos com vínculo confirmado à NF-e' : 'Faturamento líquido documentado'}</small></a><a class="display-flow-card purchases" href="${esc(link('entradas', params))}"><span>Comprado</span><b>${money(purchased)}</b><small>${number(purchaseCount)} NF-e financeiras · não equivale ao CMV</small></a></div></article>
         <article class="display-profit-card"><span class="display-kicker">LUCRO LÍQUIDO CONCILIADO</span>${falco?.profitabilityAvailable ? `<strong>${money(falco.profitabilityProfit)}</strong><div class="display-profit-rate"><span>Lucro líquido sobre custo</span><b>${profitMarkup}</b></div><div class="display-profit-details"><span><small>Lucro no relatório Falco</small><b>${money(falco.profitabilityGrossProfit)}</b></span><span><small>Custo total</small><b>${money(falco.profitabilityCost)}</b></span><span><small>Fretes de entrada</small><b>− ${money(falco.incomingFreightExpense)}</b></span><span><small>Outras despesas totais</small><b>${money(falco.profitabilityExpenses)}</b></span></div><p>Atualização em tempo real. O frete de entrada é tratado como outra despesa e abatido do lucro do Falco.</p>` : `<strong class="display-no-profit">Relatório indisponível</strong><p>A lucratividade aparecerá após a próxima sincronização do coletor Falco.</p>`}</article>
       </div>
       <div class="display-lower-summary"><article class="display-goal"><span class="display-kicker">${esc(targetNote)}</span><strong>${targetValue}</strong>${result.target === null ? `<p>Defina a meta em Metas comerciais.</p><a href="#metas">Abrir metas</a>` : `<div class="display-progress"><i style="--progress:${Math.min(100, Math.max(0, result.progress))}%"></i></div><b>${number(result.progress)}% realizado</b><p>Faltam <strong>${money(result.gap)}</strong></p><small>Progresso pelo faturamento líquido documentado.</small>`}</article>
@@ -324,6 +321,8 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
     paused: options.paused,
     target: result.target,
     net: result.net,
+    purchased,
+    purchaseCount,
     falco: falco && [
       falco.sales,
       falco.billed,
