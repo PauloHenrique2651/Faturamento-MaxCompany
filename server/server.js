@@ -21,8 +21,8 @@ import { salesTargetsRoute } from './sales-targets.js';
 import { sellerCommissionsRoute } from './seller-commissions.js';
 import { equivalencesRoute } from './product-equivalences.js';
 import { baseSummary } from '../frontend-vercel/api/[...path].js';
-import { readMaserpInvoiceStates } from './maserp-report.js';
-import { applyInvoiceStates } from '../public/lib/erp-documents.js';
+import { readMaserpInvoiceStates, readMaserpProductReferences } from './maserp-report.js';
+import { applyInvoiceStates, applyProductReferences } from '../public/lib/erp-documents.js';
 import { scopedDocuments } from '../frontend-vercel/lib/cloud-fiscal.js';
 import {
   authenticate,
@@ -51,6 +51,26 @@ async function invoiceStates() {
 }
 
 async function financializeSummary(summary, direction, params) {
+  const products = await cached('erp-product-references', () =>
+    readMaserpProductReferences(
+      new Date(Date.now() - 396 * 86400000).toISOString().slice(0, 10),
+      new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    )
+  );
+  if (products.available) {
+    summary.documents = applyProductReferences(
+      summary.documents || [],
+      products.items,
+      direction,
+      products.catalog
+    );
+    summary.canceledDocuments = applyProductReferences(
+      summary.canceledDocuments || [],
+      products.items,
+      direction,
+      products.catalog
+    );
+  }
   if (direction === 'outgoing') {
     const states = await invoiceStates();
     if (states.available) {

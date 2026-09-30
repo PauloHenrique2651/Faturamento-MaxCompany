@@ -149,3 +149,39 @@ test('todas as telas fiscais renderizam com dados cloud e com período vazio', a
   assert.match(rendered.nodes.get('#detail-content').innerHTML, /CFOP 5102/);
   renderFiscalViews([], []);
 });
+
+test('dashboard e faturamento têm um único resumo e detalhes expansíveis, sem cartões duplicados', () => {
+  const rendered = renderFiscalViews([documentFromCloud(cloudRow)], [], '2026-09-01', '2026-09-25');
+  rendered.state.nfeData.synchronization = {
+    fresh: true,
+    updatedAt: '2026-09-25T15:00:00Z',
+    sefaz: [],
+    maserpSales: {
+      available: true,
+      startDate: '2026-09-01',
+      endDate: '2026-09-25',
+      companies: [{ companyCode: 1, gross: 100, returned: 0, count: 1 }],
+      commercial: [{ companyCode: 1, pending: 20, pendingOrders: 1, billed: 100 }],
+      profitability: [{ companyCode: 1, profit: 40, cost: 60 }],
+      incomingFreights: []
+    }
+  };
+  for (const render of ['nfeDashboard', 'revenueDashboard']) {
+    vm.runInContext(render + '()', rendered.context);
+    const html = rendered.nodes.get('#page').innerHTML;
+    assert.equal((html.match(/class="fiscal-overview-grid"/g) || []).length, 1);
+    assert.equal((html.match(/class="commercial-overview"/g) || []).length, 1);
+    assert.ok(!html.includes('class="kpis"'));
+    assert.ok(!html.includes('Devoluções captadas no SEFAZ'));
+    assert.ok(!html.includes('class="fiscal-event-grid"'));
+    if (render === 'revenueDashboard')
+      assert.match(html, /<details class="panel fiscal-analysis">/);
+  }
+  rendered.state.params = new URLSearchParams(
+    'inicio=2026-09-01&vendedorNfe=Ana&operacao=devolvidas&tipoDevolucao=venda'
+  );
+  const link = vm.runInContext('href("dashboard")', rendered.context);
+  assert.ok(!link.includes('operacao='));
+  assert.ok(!link.includes('tipoDevolucao='));
+  assert.ok(link.includes('vendedorNfe=Ana'));
+});

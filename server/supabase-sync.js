@@ -4,8 +4,12 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderDanfe } from './danfe.js';
-import { readMaserpSalesSnapshot, readMaserpInvoiceStates } from './maserp-report.js';
-import { applyInvoiceStates } from '../public/lib/erp-documents.js';
+import {
+  readMaserpSalesSnapshot,
+  readMaserpInvoiceStates,
+  readMaserpProductReferences
+} from './maserp-report.js';
+import { applyInvoiceStates, applyProductReferences } from '../public/lib/erp-documents.js';
 import { readNfeSummary, readOutgoingDocument } from './nfe-files.js';
 import {
   readIncomingDocument,
@@ -218,6 +222,71 @@ async function syncInvoiceStateChanges(states, state, alreadySent) {
   return {
     reviewed: states.length,
     changed: changed.length,
+    pending: Math.max(0, pending.length - batch.length)
+  };
+}
+
+async function syncProductReferenceChanges(productReferences, state, sent) {
+  const fingerprints = state.productFingerprints || {};
+  const groups = new Map();
+  for (const ref of productReferences.items) {
+    const key = `${ref.direction}/${String(ref.accessKey).trim()}`;
+    const list = groups.get(key) || [];
+    list.push(ref);
+    groups.set(key, list);
+  }
+  const catalogDigest = createHash('sha256')
+    .update(JSON.stringify(productReferences.catalog || []))
+    .digest('hex');
+  const digest = (refs) =>
+    createHash('sha256')
+      .update(JSON.stringify(refs) + catalogDigest)
+      .digest('hex');
+  const sentKeys = new Set(sent.map((row) => `${row.direction}/${row.access_key}`));
+  const changed = [...groups].filter(([key, refs]) => fingerprints[key] !== digest(refs));
+  for (const [key, refs] of changed.filter(([key]) => sentKeys.has(key)))
+    fingerprints[key] = digest(refs);
+  const pending = changed
+    .filter(([key]) => !sentKeys.has(key))
+    .sort(
+      ([a], [b]) =>
+        Number(Boolean(fingerprints[b])) - Number(Boolean(fingerprints[a])) ||
+        Number(b.startsWith('incoming/')) - Number(a.startsWith('incoming/')) ||
+        b.split('/')[1].slice(2, 6).localeCompare(a.split('/')[1].slice(2, 6))
+    );
+  const batch = pending.slice(0, 150);
+  for (const direction of ['incoming', 'outgoing']) {
+    const selected = batch.filter(([key]) => key.startsWith(`${direction}/`));
+    if (!selected.length) continue;
+    const raw = await request(
+      `/rest/v1/fiscal_documents?direction=eq.${direction}&access_key=in.(${selected.map(([key]) => key.split('/')[1]).join(',')})&select=company_id,access_key,source_payload`
+    );
+    for (let offset = 0; offset < raw.length; offset += 4)
+      await Promise.all(
+        raw.slice(offset, offset + 4).map((row) => {
+          const refs = groups.get(`${direction}/${row.access_key}`) || [];
+          const source = applyProductReferences(
+            [{ ...row.source_payload, companyId: row.company_id, key: row.access_key }],
+            refs,
+            direction,
+            productReferences.catalog
+          )[0];
+          return request(
+            `/rest/v1/fiscal_documents?company_id=eq.${row.company_id}&direction=eq.${direction}&access_key=eq.${row.access_key}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ source_payload: source, synced_at: new Date().toISOString() })
+            }
+          );
+        })
+      );
+    for (const [key, refs] of selected) fingerprints[key] = digest(refs);
+  }
+  state.productFingerprints = fingerprints;
+  return {
+    available: true,
+    reviewed: groups.size,
     pending: Math.max(0, pending.length - batch.length)
   };
 }
@@ -499,13 +568,15 @@ export async function syncSupabaseFromFalco() {
       body: JSON.stringify({ source: 'falco-local', status: 'running', details: { start, end } })
     });
     runId = created?.[0]?.id || null;
-    const [outgoing, incoming, sefaz, maserpSales, invoiceStates] = await Promise.all([
-      readNfeSummary(start, end),
-      readIncomingSummary(start, end),
-      readIncomingSyncStatus(),
-      readMaserpSalesSnapshot(`${end.slice(0, 7)}-01`, end),
-      readMaserpInvoiceStates(settings.startDate, end)
-    ]);
+    const [outgoing, incoming, sefaz, maserpSales, invoiceStates, productReferences] =
+      await Promise.all([
+        readNfeSummary(start, end),
+        readIncomingSummary(start, end),
+        readIncomingSyncStatus(),
+        readMaserpSalesSnapshot(`${end.slice(0, 7)}-01`, end),
+        readMaserpInvoiceStates(settings.startDate, end),
+        readMaserpProductReferences(shiftDays(`${end.slice(0, 7)}-01`, -365), end)
+      ]);
     if (!invoiceStates.available)
       throw new Error('Revisão MASERP indisponível; preservado último conjunto confirmado');
     if (invoiceStates.available) {
@@ -516,6 +587,25 @@ export async function syncSupabaseFromFalco() {
       );
     }
     const userCount = await syncUsers();
+    if (productReferences.available) {
+      for (const [summary, direction] of [
+        [outgoing, 'outgoing'],
+        [incoming, 'incoming']
+      ]) {
+        summary.documents = applyProductReferences(
+          summary.documents,
+          productReferences.items,
+          direction,
+          productReferences.catalog
+        );
+        summary.canceledDocuments = applyProductReferences(
+          summary.canceledDocuments,
+          productReferences.items,
+          direction,
+          productReferences.catalog
+        );
+      }
+    }
     const outgoingRows = [...outgoing.documents, ...outgoing.canceledDocuments].map((row) =>
       normalizeCloudDocument(row, 'outgoing')
     );
@@ -534,6 +624,12 @@ export async function syncSupabaseFromFalco() {
         ])
       : { available: false };
     state.documentFingerprints = changes.fingerprints;
+    const productReconciliation = productReferences.available
+      ? await syncProductReferenceChanges(productReferences, state, [
+          ...outgoingRows,
+          ...incomingRows
+        ])
+      : { available: false };
     state.artifactQueue = mergeArtifactQueue(
       [...outgoing.documents, ...outgoing.canceledDocuments],
       [...incoming.documents, ...incoming.canceledDocuments],
@@ -602,6 +698,7 @@ export async function syncSupabaseFromFalco() {
       sefaz,
       maserpSales,
       erpReconciliation,
+      productReconciliation,
       artifactAttempts,
       artifactErrors,
       generatedDanfeCount,

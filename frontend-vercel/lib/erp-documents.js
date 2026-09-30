@@ -1,6 +1,84 @@
 const ids = { 1: 1, 3: 2, 5: 3, 6: 4 };
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+export function applyProductReferences(rows, references, direction, catalog = []) {
+  const index = new Map();
+  const supplierIndex = new Map();
+  const supplierKey = (id, code, ncm, unit) =>
+    `${String(id || '').replace(/\D/g, '')}/${String(code || '').trim()}/${String(ncm || '').replace(/\D/g, '')}/${String(
+      unit || ''
+    )
+      .trim()
+      .toUpperCase()}`;
+  for (const ref of catalog) {
+    const key = supplierKey(ref.supplierId, ref.supplierCode, ref.ncm, ref.unit);
+    const list = supplierIndex.get(key) || [];
+    list.push(ref);
+    supplierIndex.set(key, list);
+  }
+  for (const ref of references) {
+    const key = `${ids[ref.companyCode]}/${ref.direction}/${String(ref.accessKey).trim()}/${ref.sequence}`;
+    const list = index.get(key) || [];
+    list.push(ref);
+    index.set(key, list);
+  }
+  return rows.map((row) => {
+    const id =
+      row.companyId ||
+      { MaxPlast: 1, MaxSafety: 2, MaxSupply: 3, 'MaxSupply · Filial ES': 4 }[row.company];
+    const detail = Array.isArray(row.itemsDetail)
+      ? row.itemsDetail
+      : Array.isArray(row.items)
+        ? row.items
+        : null;
+    if (!detail) return row;
+    const itemsDetail = detail.map((item, position) => {
+      const list =
+        index.get(`${id}/${direction}/${row.key}/${item.line || item.sequence || position + 1}`) ||
+        [];
+      const valid = list.filter(
+        (ref) =>
+          Number(ref.productId) > 0 &&
+          String(ref.unit || '')
+            .trim()
+            .toUpperCase() ===
+            String(item.unit || '')
+              .trim()
+              .toUpperCase() &&
+          Math.abs(Number(ref.quantity) - Number(item.quantity)) < 0.00001 &&
+          Math.abs(Number(ref.price) * Number(ref.quantity) - Number(item.value)) <= 0.03 &&
+          (!String(ref.ncm || '').trim() ||
+            String(ref.ncm).replace(/\D/g, '') === String(item.ncm).replace(/\D/g, ''))
+      );
+      const productIds = new Set(valid.map((ref) => Number(ref.productId)));
+      const supplierIds = new Set(
+        direction === 'incoming'
+          ? (supplierIndex.get(supplierKey(row.supplier?.id, item.code, item.ncm, item.unit)) || [])
+              .map((ref) => Number(ref.productId))
+              .filter((id) => id > 0)
+          : []
+      );
+      // Remove ligação antiga se a revisão atual deixou de comprová-la.
+      const { erpProductId, erpProductSource, ...base } = item;
+      return productIds.size === 1
+        ? { ...base, erpProductId: [...productIds][0], erpProductSource: 'MASERP: nota e item' }
+        : productIds.size === 0 && supplierIds.size === 1
+          ? {
+              ...base,
+              erpProductId: [...supplierIds][0],
+              erpProductSource: 'MASERP: cadastro do fornecedor'
+            }
+          : base;
+    });
+    return {
+      ...row,
+      companyId: id,
+      itemsDetail,
+      ...(Array.isArray(row.items) ? { items: itemsDetail } : {})
+    };
+  });
+}
+
 export function applyInvoiceStates(rows, states) {
   const map = new Map(
     states.map((state) => [`${ids[state.companyCode]}/${state.accessKey}`, state])

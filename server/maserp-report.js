@@ -77,6 +77,45 @@ export async function readMaserpInvoiceStates(startDate, endDate) {
   }
 }
 
+// Identidade por nota e item lançado no ERP; códigos do fornecedor não são
+// confundidos com o código interno, nem sugestões de importação são aprovadas.
+export async function readMaserpProductReferences(startDate, endDate) {
+  try {
+    const pool = await getMaserpPool();
+    const request = pool.request();
+    request.input('start', sql.Date, startDate);
+    request.input('end', sql.Date, endDate);
+    const result = await request.query(`
+      SELECT n.emp_empresa_IN companyCode,n.not_chavenotafiscaleletronica_VC accessKey,
+        'outgoing' direction,i.ite_sequencia_IN sequence,i.pro_produto_IN productId,
+        i.ite_unidade_CH unit,i.ite_quantidade_NM quantity,i.ite_preco_MN price,
+        i.ite_ncm_CH ncm
+      FROM notafiscalsaida_T n JOIN itensnotafiscalsaida_T i
+        ON i.emp_empresa_IN=n.emp_empresa_IN AND i.not_numero_IN=n.not_numero_IN
+      WHERE n.emp_empresa_IN IN (${companyCodes.join(',')}) AND n.not_dataemissao_DT>=@start
+        AND n.not_dataemissao_DT<DATEADD(day,1,@end) AND LEN(n.not_chavenotafiscaleletronica_VC)=44
+      UNION ALL
+      SELECT n.emp_empresa_IN,n.not_chavenotafiscaleletronica_VC,'incoming',
+        i.ite_sequencia_IN,i.ite_produto_IN,i.ite_unidade_CH,i.ite_quantidade_FL,i.ite_preco_NM,i.ite_cf_CH
+      FROM notafiscalentrada_T n JOIN itensnotafiscalentrada_T i
+        ON i.emp_empresa_IN=n.emp_empresa_IN AND i.not_numerointerno_IN=n.not_numerointerno_IN
+      WHERE n.emp_empresa_IN IN (${companyCodes.join(',')}) AND n.not_dataemissao_DT>=@start
+        AND n.not_dataemissao_DT<DATEADD(day,1,@end) AND LEN(n.not_chavenotafiscaleletronica_VC)=44
+        AND ISNULL(n.not_excluido_BT,0)=0 AND ISNULL(n.not_confirmada_BT,0)=1;
+      SELECT pf.pro_produto_IN productId, f.for_cnpj supplierId,
+        COALESCE(NULLIF(LTRIM(RTRIM(pf.pro_codigonf_VC)),''),NULLIF(LTRIM(RTRIM(pf.pro_codigo_VC)),'')) supplierCode,
+        p.pro_unidade unit,p.pro_cf_CH ncm
+      FROM produtofornecedor_T pf JOIN fornecedor f ON f.for_codigo=pf.for_fornecedor_IN
+        JOIN produto p ON p.pro_codigo=pf.pro_produto_IN
+      WHERE NULLIF(LTRIM(RTRIM(pf.pro_codigo_VC)),'') IS NOT NULL
+        OR NULLIF(LTRIM(RTRIM(pf.pro_codigonf_VC)),'') IS NOT NULL;
+    `);
+    return { available: true, items: result.recordsets[0], catalog: result.recordsets[1] };
+  } catch {
+    return { available: false, items: [] };
+  }
+}
+
 function databaseSettings() {
   let saved = {};
   try {

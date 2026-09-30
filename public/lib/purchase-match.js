@@ -30,6 +30,7 @@ const itemKeys = (item) => {
   const unit = normalize(item.unit);
   if (!ncm || !unit) return [];
   const keys = [];
+  if (Number(item.erpProductId) > 0) keys.push(`erp:${ncm}:${unit}:${item.erpProductId}`);
   if (/^\d{8,14}$/.test(String(item.gtin || ''))) keys.push(`gtin:${ncm}:${unit}:${item.gtin}`);
   const name = normalize(item.name);
   if (name.length >= 12) keys.push(`name:${ncm}:${unit}:${name}`);
@@ -95,6 +96,7 @@ export function purchaseSuggestions(outgoing, incoming, equivalences = []) {
           )
         )
           continue;
+        if (item.erpProductId && candidate.item.erpProductId) continue;
         const score = similarity(item.name, candidate.item.name);
         if (score >= 0.7 && (!best || score > best.score))
           best = { sale, item, purchase: candidate.document, purchaseItem: candidate.item, score };
@@ -150,6 +152,12 @@ export function reconcilePurchases(outgoing, incoming, options = {}) {
       const keys = [...itemKeys(item), `mapped:${item.ncm}:${normalize(item.unit)}:${item.code}`];
       for (const key of keys) {
         const candidates = (index.get(`${companyId(sale)}:${key}`) || []).filter((candidate) => {
+          if (
+            item.erpProductId &&
+            candidate.item.erpProductId &&
+            Number(item.erpProductId) !== Number(candidate.item.erpProductId)
+          )
+            return false;
           const days = (Date.parse(sale.date) - Date.parse(candidate.date)) / 86400000;
           return days > 0 && days <= lookbackDays;
         });
@@ -162,11 +170,13 @@ export function reconcilePurchases(outgoing, incoming, options = {}) {
         }
         match = {
           ...candidates[0],
-          basis: key.startsWith('gtin:')
-            ? 'GTIN, NCM e unidade'
-            : key.startsWith('mapped:')
-              ? 'Equivalência aprovada, NCM e unidade'
-              : 'Descrição exata, NCM e unidade'
+          basis: key.startsWith('erp:')
+            ? 'Código interno MASERP, NCM e unidade'
+            : key.startsWith('gtin:')
+              ? 'GTIN, NCM e unidade'
+              : key.startsWith('mapped:')
+                ? 'Equivalência aprovada, NCM e unidade'
+                : 'Descrição exata, NCM e unidade'
         };
         break;
       }
@@ -189,6 +199,7 @@ export function reconcilePurchases(outgoing, incoming, options = {}) {
         saleDate: sale.date,
         itemName: item.name,
         itemCode: item.code,
+        erpProductId: item.erpProductId || null,
         ncm: item.ncm,
         quantity,
         unit: item.unit,

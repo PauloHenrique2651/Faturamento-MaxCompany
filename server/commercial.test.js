@@ -8,6 +8,7 @@ import {
 import { purchaseSuggestions, reconcilePurchases } from '../public/lib/purchase-match.js';
 import { validateTarget } from './sales-targets.js';
 import { validateEquivalence } from './product-equivalences.js';
+import { applyProductReferences } from '../public/lib/erp-documents.js';
 
 const item = (extra = {}) => ({
   name: 'Luva nitrilica industrial tamanho G',
@@ -189,4 +190,96 @@ test('meta inválida não entra no banco próprio do CRM', () => {
     }).scope_key,
     'ALVARO'
   );
+});
+
+test('código interno MASERP vincula descrições e códigos diferentes, sem aprovação manual', () => {
+  const sold = sale({ itemsDetail: [item({ code: '14939', name: 'Produto comercial A' })] });
+  const bought = purchase({
+    itemsDetail: [item({ code: 'FORNECEDOR-XYZ', name: 'Descrição do fornecedor B', value: 60 })]
+  });
+  const references = [
+    {
+      companyCode: 1,
+      accessKey: 'S1',
+      direction: 'outgoing',
+      sequence: 1,
+      productId: 14939,
+      unit: 'PAR ',
+      ncm: '4015.19.00',
+      quantity: 10,
+      price: 10
+    },
+    {
+      companyCode: 1,
+      accessKey: 'P1',
+      direction: 'incoming',
+      sequence: 1,
+      productId: 14939,
+      unit: 'PAR ',
+      ncm: '4015.19.00',
+      quantity: 10,
+      price: 6
+    }
+  ];
+  const outgoing = { documents: applyProductReferences([sold], references, 'outgoing') };
+  const incoming = { documents: applyProductReferences([bought], references, 'incoming') };
+  const result = reconcilePurchases(outgoing, incoming);
+  assert.equal(result.matchedLines, 1);
+  assert.equal(result.purchaseReferenceValue, 60);
+  assert.match(result.matches[0].basis, /MASERP/);
+  assert.equal(purchaseSuggestions(outgoing, incoming).length, 0);
+  assert.equal(
+    applyProductReferences([sold], [{ ...references[0], companyCode: 3 }], 'outgoing')[0]
+      .itemsDetail[0].erpProductId,
+    undefined
+  );
+  assert.equal(
+    applyProductReferences([sold], [{ ...references[0], quantity: 9 }], 'outgoing')[0]
+      .itemsDetail[0].erpProductId,
+    undefined
+  );
+  assert.equal(
+    applyProductReferences(
+      [sold],
+      [references[0], { ...references[0], productId: 99 }],
+      'outgoing'
+    )[0].itemsDetail[0].erpProductId,
+    undefined
+  );
+});
+
+test('identidades MASERP diferentes não são conciliadas por nome, GTIN ou aprovação antiga', () => {
+  const outgoing = {
+    documents: [
+      sale({ itemsDetail: [item({ code: '1', erpProductId: 1, gtin: '7891234567890' })] })
+    ]
+  };
+  const incoming = {
+    documents: [
+      purchase({
+        itemsDetail: [item({ code: '2', erpProductId: 2, gtin: '7891234567890', value: 60 })]
+      })
+    ]
+  };
+  assert.equal(reconcilePurchases(outgoing, incoming).matchedLines, 0);
+});
+
+test('cadastro fornecedor MASERP exige CNPJ, código, NCM, unidade e identidade única', () => {
+  const doc = purchase({
+    supplier: { id: '12345678000199' },
+    itemsDetail: [item({ code: 'FOR-7', value: 60 })]
+  });
+  const mapping = {
+    supplierId: '12.345.678/0001-99',
+    supplierCode: 'FOR-7',
+    ncm: '4015.19.00',
+    unit: 'PAR ',
+    productId: 14939
+  };
+  const apply = (catalog) =>
+    applyProductReferences([doc], [], 'incoming', catalog)[0].itemsDetail[0].erpProductId;
+  assert.equal(apply([mapping]), 14939);
+  assert.equal(apply([{ ...mapping, supplierId: '00000000000000' }]), undefined);
+  assert.equal(apply([{ ...mapping, unit: 'CX' }]), undefined);
+  assert.equal(apply([mapping, { ...mapping, productId: 88 }]), undefined);
 });

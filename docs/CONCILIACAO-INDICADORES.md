@@ -18,3 +18,13 @@
 Caso de regressão: MaxSupply, notas Braskem 791 e 793, vendedor Tiago Zagri dos Santos. Devoluções integrais de R$ 362.780,80 e R$ 325.656,58, total R$ 688.437,38. A nota 815 não tem devolução. Resumo, vendedor, notas, detalhes e evolução devem conservar essa atribuição sem duplicidade.
 
 Testes cobrem o contrato cloud, as telas fiscais, a regressão Braskem, cancelamentos e reversão de devolução, distinção compra/venda e preservação de artefatos. O preenchimento histórico pode permanecer em andamento; não confundir sua fila com a atualização das notas do mês corrente.
+
+## Refino de produtos e visualização (30/09/2026)
+
+Dashboard e faturamento usam um único resumo fiscal/comercial. A análise por XML e a conciliação de produtos ficam em uma seção expansível no faturamento; não repetem os indicadores principais. Filtros específicos de devolução/operação não vazam para outras telas.
+
+A conciliação prioriza o código interno do MASERP comprovado pela empresa, chave da nota, sequência do item, NCM, unidade, quantidade e valor. Nas entradas, também aceita um único vínculo no cadastro fornecedor/produto, com CNPJ, código do fornecedor, NCM e unidade exatos. Identidades ERP conflitantes não podem ser substituídas por nomes parecidos, GTIN ou aprovação antiga. Conversões de embalagem não comprovadas continuam pendentes. O preço de compra é referência parcial, nunca CMV nem lucro oficial.
+
+O coletor 24/7 publica os vínculos dos documentos recentes com a sincronização normal e revisa o histórico do último ano em lotes, priorizando compras. A revisão preserva os XMLs, DANFEs e os critérios fiscais. Notas resumidas, não lançadas no ERP ou com cadastro ambíguo não recebem uma identidade inventada.
+
+Validação de origem: 13.242 itens consultados no período 01/09/2025–30/09/2026; 507 linhas de venda e 11 linhas de compra comprovadas nos XMLs disponíveis. Exemplos conciliados: produtos internos 11649, 629 e 18420, mantendo abertura das notas de compra/venda. A cobertura restante é uma limitação real dos vínculos/documentos disponíveis, não equivalência automática por descrição.
