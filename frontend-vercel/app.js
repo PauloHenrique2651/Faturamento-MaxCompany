@@ -1,5 +1,11 @@
 import { parseRate, projectedCommission } from './commission.js';
 import { fetchJson } from './lib/api-client.js';
+import { createViewSnapshots } from './lib/view-snapshot.js';
+const viewSnapshots = createViewSnapshots({
+  getItem: (key) => sessionStorage.getItem(key),
+  setItem: (key, value) => sessionStorage.setItem(key, value),
+  removeItem: (key) => sessionStorage.removeItem(key)
+});
 import {
   matchingPreset,
   monthForecast,
@@ -59,6 +65,7 @@ async function sendJson(path, method, body = {}) {
   return data;
 }
 function showLogin(message = '') {
+  viewSnapshots.clear();
   state.user = null;
   document.body.classList.remove('auth-pending');
   document.body.classList.add('auth-locked');
@@ -1639,19 +1646,68 @@ function nfeDashboard() {
     node.replaceWith(anchor);
   });
 }
+const snapshotRenderers = {
+  dashboard: nfeDashboard,
+  mostrador: paintMostrador,
+  emitidas: outgoingDocuments,
+  canceladas: outgoingDocuments,
+  entradas: incomingDashboard,
+  recebidas: incomingDocuments,
+  fretes: freightDashboard,
+  devolucoes: returnsDashboard,
+  fiscal: nfeFiscal,
+  impostos: taxDashboard
+};
+function viewSnapshotScope() {
+  const params = new URLSearchParams(state.params);
+  params.sort();
+  return JSON.stringify([
+    state.user.id || state.user.name,
+    state.user.role,
+    state.view,
+    params.toString(),
+    today()
+  ]);
+}
+function rememberView(scope) {
+  if (!snapshotRenderers[state.view]) return;
+  viewSnapshots.set(scope, {
+    nfeData: state.nfeData,
+    incomingData: state.incomingData,
+    targets: state.targets
+  });
+}
 let activeLoads = 0;
 async function load(background = false) {
   if (!state.user) return;
   if (background && activeLoads > 0) return;
   activeLoads++;
   const seq = ++state.seq;
+  const snapshotScope = viewSnapshotScope();
+  let restored = false;
+  if (!background && snapshotRenderers[state.view]) {
+    const saved = viewSnapshots.get(snapshotScope);
+    if (saved)
+      try {
+        Object.assign(state, saved.data);
+        state.mostradorSignature = '';
+        showXmlCompanies();
+        snapshotRenderers[state.view]();
+        restored = true;
+        $('#notice').innerHTML =
+          `<div class="source-status" role="status"><div><strong>Exibindo dados já carregados</strong><span>Consulta de ${new Date(saved.at).toLocaleString('pt-BR')}. Verificando atualizações…</span></div></div>`;
+      } catch {
+        viewSnapshots.clear();
+        restored = false;
+      }
+  }
   $('#refresh').disabled = true;
   $('#page').setAttribute('aria-busy', 'true');
   $('#connection-indicator').setAttribute('aria-label', 'Verificando conexão com o ERP Falco');
   $('#data-source-status').textContent = 'Falco · Atualizando dados ao vivo';
   document.body.classList.add('is-updating');
   if (background) $('#sync-status').textContent = 'Atualizando dados…';
-  if (!background)
+  if (!background && !restored)
     $('#page').innerHTML =
       `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Lendo XMLs de NF-e…'}</div>`;
   try {
@@ -1676,6 +1732,7 @@ async function load(background = false) {
       state.incomingData = incoming;
       state.targets = targets;
       state.commissionRules = commissionRules;
+      rememberView(snapshotScope);
       if (state.view === 'mostrador') paintMostrador();
       else metasPage();
       $('#sync-status').textContent =
@@ -1729,12 +1786,21 @@ async function load(background = false) {
         'impostos'
       ].includes(state.view)
     ) {
-      state.nfeData = await fetchJson(`/api/falco/nfe?${state.params}`);
+      const needsIncoming = [
+        'dashboard',
+        'faturamento',
+        'dre',
+        'devolucoes',
+        'fiscal',
+        'impostos'
+      ].includes(state.view);
+      const [outgoing, incoming] = await Promise.all([
+        fetchJson(`/api/falco/nfe?${state.params}`),
+        needsIncoming ? fetchJson(`/api/falco/entradas?${state.params}`) : Promise.resolve(null)
+      ]);
       if (seq !== state.seq) return;
-      if (['dashboard', 'faturamento', 'dre', 'devolucoes', 'fiscal'].includes(state.view)) {
-        state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
-        if (seq !== state.seq) return;
-      }
+      state.nfeData = outgoing;
+      state.incomingData = incoming;
       if (state.view === 'faturamento' || state.view === 'dre') {
         if (state.view === 'faturamento') {
           state.targets = await fetchJson(
@@ -1763,10 +1829,7 @@ async function load(background = false) {
         await loadEquivalences();
         if (seq !== state.seq) return;
       }
-      if (state.view === 'impostos') {
-        state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
-        if (seq !== state.seq) return;
-      }
+      rememberView(snapshotScope);
       showXmlCompanies();
       if (state.view === 'dashboard') nfeDashboard();
       else if (state.view === 'faturamento') revenueDashboard();
@@ -1794,8 +1857,11 @@ async function load(background = false) {
       return;
     }
     if (['entradas', 'recebidas'].includes(state.view)) {
-      state.incomingData = await fetchJson(`/api/falco/entradas?${state.params}`);
+      const incoming = await fetchJson(`/api/falco/entradas?${state.params}`);
       if (seq !== state.seq) return;
+      state.incomingData = incoming;
+      state.nfeData = null;
+      rememberView(snapshotScope);
       showXmlCompanies();
       if (state.view === 'entradas') incomingDashboard();
       else incomingDocuments();
@@ -1843,7 +1909,13 @@ async function load(background = false) {
     $('#sync-status').textContent = 'Fonte Falco indisponível';
     $('#connection-indicator').setAttribute('aria-label', 'ERP Falco indisponível');
     $('#data-source-status').textContent = 'Falco indisponível · último instantâneo preservado';
-    if (snapshot && sameScope && !legacyViews.has(state.view) && state.view !== 'dashboard') {
+    if (
+      !restored &&
+      snapshot &&
+      sameScope &&
+      !legacyViews.has(state.view) &&
+      state.view !== 'dashboard'
+    ) {
       state.data = snapshot.data;
       $('#company').innerHTML =
         '<option value="">Todas as empresas</option>' +
@@ -1855,7 +1927,7 @@ async function load(background = false) {
       render();
       $('#notice').innerHTML =
         `<div class="source-status" role="status"><div>${icon('shield')}</div><div><strong>Exibindo o último instantâneo confirmado</strong><span>Dados consultados em ${new Date(snapshot.savedAt).toLocaleString('pt-BR')}. A atualização será retomada assim que o ERP Falco responder.</span></div><button class="text-button" data-retry>Tentar agora</button></div>`;
-    } else if (background)
+    } else if (background || restored)
       $('#notice').innerHTML =
         `<div class="source-status" role="status"><div>${icon('shield')}</div><div><strong>Atualização temporariamente indisponível</strong><span>Os dados já exibidos permanecem preservados.</span></div><button class="text-button" data-retry>Tentar agora</button></div>`;
     else
