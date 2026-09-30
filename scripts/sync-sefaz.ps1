@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('all', '1', '2', '3', '4')]
     [string]$Company = 'all',
     [ValidateRange(1, 100)]
@@ -6,6 +6,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Add-Type -AssemblyName System.Net.Http
 $endpoint = 'https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx'
 $action = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse'
 $storage = Join-Path (Split-Path $PSScriptRoot -Parent) 'data\sefaz'
@@ -17,7 +19,7 @@ $companies = @(
 )
 
 # Impede duas instâncias locais de consultarem o mesmo cursor simultaneamente.
-$mutex = [Threading.Mutex]::new($false, 'Local\MaxCompanyCrmSefazDistribution')
+$mutex = New-Object -TypeName System.Threading.Mutex -ArgumentList $false, 'Local\MaxCompanyCrmSefazDistribution'
 if (-not $mutex.WaitOne(0)) { Write-Output 'Consulta SEFAZ já em execução'; exit 0 }
 try {
 
@@ -95,19 +97,20 @@ foreach ($companyConfig in $companies) {
         Write-Output "$($companyConfig.Name): aguardando janela da SEFAZ até $($state.NextAllowedAt)"
         continue
     }
-    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler = New-Object System.Net.Http.HttpClientHandler
     $handler.UseProxy = $false
     $null = $handler.ClientCertificates.Add($certificate)
-    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client = New-Object -TypeName System.Net.Http.HttpClient -ArgumentList $handler
     $client.Timeout = [TimeSpan]::FromSeconds(45)
     try {
         for ($batch = 0; $batch -lt $MaxBatches; $batch++) {
             $lastNsu = if ($state.LastNsu -match '^\d{15}$') { $state.LastNsu } else { '000000000000000' }
             $body = '<distDFeInt versao="1.01" xmlns="http://www.portalfiscal.inf.br/nfe"><tpAmb>1</tpAmb><cUFAutor>' + $companyConfig.Uf + '</cUFAutor><CNPJ>' + $cnpj + '</CNPJ><distNSU><ultNSU>' + $lastNsu + '</ultNSU></distNSU></distDFeInt>'
             $soap = '<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe"><nfeDadosMsg>' + $body + '</nfeDadosMsg></nfeDistDFeInteresse></soap12:Body></soap12:Envelope>'
-            $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $endpoint)
-            $request.Content = [System.Net.Http.StringContent]::new($soap, [System.Text.Encoding]::UTF8, 'application/soap+xml')
-            $request.Content.Headers.ContentType.Parameters.Add([System.Net.Http.Headers.NameValueHeaderValue]::new('action', '"' + $action + '"'))
+            $request = New-Object -TypeName System.Net.Http.HttpRequestMessage -ArgumentList ([System.Net.Http.HttpMethod]::Post), $endpoint
+            $request.Content = New-Object -TypeName System.Net.Http.StringContent -ArgumentList $soap, ([System.Text.Encoding]::UTF8), 'application/soap+xml'
+            $actionParameter = New-Object -TypeName System.Net.Http.Headers.NameValueHeaderValue -ArgumentList 'action', ('"' + $action + '"')
+            $request.Content.Headers.ContentType.Parameters.Add($actionParameter)
             try {
                 $response = $client.SendAsync($request).GetAwaiter().GetResult()
                 $reply = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
@@ -134,9 +137,9 @@ foreach ($companyConfig in $companies) {
                     $target = Join-Path $folder "nsu-$nsu-$schema.xml"
                     if (Test-Path -LiteralPath $target) { continue }
                     $compressed = [Convert]::FromBase64String($zip.InnerText)
-                    $inputStream = [System.IO.MemoryStream]::new($compressed)
-                    $gzip = [System.IO.Compression.GZipStream]::new($inputStream, [System.IO.Compression.CompressionMode]::Decompress)
-                    $outputStream = [System.IO.MemoryStream]::new()
+                    $inputStream = New-Object -TypeName System.IO.MemoryStream -ArgumentList (,$compressed)
+                    $gzip = New-Object -TypeName System.IO.Compression.GZipStream -ArgumentList $inputStream, ([System.IO.Compression.CompressionMode]::Decompress)
+                    $outputStream = New-Object System.IO.MemoryStream
                     try {
                         $gzip.CopyTo($outputStream)
                         [System.IO.File]::WriteAllBytes($target, $outputStream.ToArray())
@@ -164,7 +167,7 @@ foreach ($companyConfig in $companies) {
             if ($status -ne '138' -or $returnedNsu -eq $maxNsu) { break }
         }
     } catch {
-        $state.LastError = $_.Exception.Message
+        $state.LastError = $_.Exception.GetBaseException().Message
         $state.LastAttemptAt = [DateTimeOffset]::UtcNow.ToString('o')
         $state.NextAllowedAt = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString('o')
         Save-State $statePath $state

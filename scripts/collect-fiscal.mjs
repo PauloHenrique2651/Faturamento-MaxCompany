@@ -27,7 +27,7 @@ function checkSefaz() {
           'powershell.exe'
         )
       : 'pwsh');
-  const child = spawn(powershell, ['-NoProfile', '-File', script, '-MaxBatches', '20'], {
+  const child = spawn(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-MaxBatches', '20'], {
     windowsHide: true,
     stdio: ['ignore', 'inherit', 'inherit']
   });
