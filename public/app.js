@@ -820,14 +820,14 @@ function revenueDashboard() {
       : `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas financeiras nos XMLs', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? (falco.profitabilityAvailable ? `Lucro líquido ${money(falco.profitabilityProfit)} · após ${money(falco.incomingFreightExpense)} de fretes de entrada` : 'Lucratividade aguardando sincronização') : `${money(data.saleValue)} em itens elegíveis`, 'wallet', true, href('dashboard'), hasFalcoPeriod ? 'Faturamento comercial e lucro do Relatório de Lucratividade do Falco.' : 'Itens dos XMLs classificados pelos CFOPs financeiros.')}${kpi(hasFalcoPeriod ? 'Pedidos a faturar' : 'Saldo gerencial dos XMLs', bigMoney(hasFalcoPeriod ? falco.pending : net), hasFalcoPeriod ? `${num(falco.pendingOrders)} pedidos com saldo pendente` : 'Vendas financeiras menos devoluções vinculadas', 'trend', false, href('dashboard'))}${kpi(hasFalcoPeriod ? 'NF-e emitidas no Falco' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas · antes das devoluções` : 'Não equivale a faturamento', 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal após devolução' : 'Devoluções financeiras', bigMoney(hasFalcoPeriod ? falco.net : returned), hasFalcoPeriod ? `${money(falco.returned)} devolvidos no Falco` : `${num(received?.financialLinkedCount || 0)} confirmadas`, 'box', false, 'devolucoes')}</section>`) +
     `<article class="panel nfe-trend">${panelHead('Faturamento real acumulado', targetPath ? 'Azul: realizado · verde: meta acumulada' : 'Realizado acumulado · defina uma meta para comparar')}<svg class="nfe-line-chart" viewBox="0 0 710 205" role="img" aria-label="Faturamento real acumulado e meta"><line x1="54" x2="654" y1="170" y2="170" stroke="#d9e0e5"/><path d="${cumulativePath}" fill="none" stroke="var(--accent)" stroke-width="3"/>${targetPath ? `<path d="${targetPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${daily.map((row, index) => `<circle cx="${cx(index)}" cy="${cy(row.cumulative)}" r="2.5" fill="var(--accent)"><title>${date(row.date)} · realizado ${money(row.cumulative)}${row.target === null ? '' : ` · meta ${money(row.target)}`}</title></circle>`).join('')}</svg></article>` +
     (hasFalcoPeriod ? '' : fiscalEventCards(data, state.incomingData)) +
-    `<details class="panel fiscal-analysis"><summary>Análise dos XMLs e conciliação de produtos</summary><div class="fiscal-analysis-content"><div class="notice">Do valor fiscal emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores. Os itens sem efeito financeiro e as diferenças sem rateio ficam fora das vendas financeiras. ${num((received?.count || 0) - (received?.financialLinkedCount || 0))} devoluções recebidas aguardam vínculo ou conciliação financeira; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
+    `<details class="panel fiscal-analysis" ${state.fiscalAnalysisOpen ? 'open' : ''}><summary>Análise dos XMLs e conciliação de produtos</summary><div class="fiscal-analysis-content"><div class="notice">Do valor fiscal emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores. Os itens sem efeito financeiro e as diferenças sem rateio ficam fora das vendas financeiras. ${num((received?.count || 0) - (received?.financialLinkedCount || 0))} devoluções recebidas aguardam vínculo ou conciliação financeira; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${reconciliationPanel(data)}${coveragePanel(data)}</div>` +
     purchaseMatchPanel(data, state.purchaseHistory) +
     '</div></details>' +
     `<div class="nfe-charts nfe-charts-secondary">${averagePanel({ ...data, value: data.saleValue })}${forecastPanel(month ? { ...month, value: month.saleValue } : null, state.previousMonthData ? { ...state.previousMonthData, value: state.previousMonthData.saleValue } : null, state.monthData ? saleReturnsValue(state.monthData, state.monthIncomingData) : null)}</div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendedores', 'Valor das NF-e atribuído no XML', data.sellers, false, 12, 'seller')}${nfeRanking('Grupos de clientes', 'Valor consolidado dos CNPJs', data.customerGroups, false, 12, 'customerGroup')}</div>` +
     `<article class="panel analytic-panel">${panelHead('Composição documentada', 'Valores informados no total da NF-e')}${metricPanel('Descontos', data.discountValue, 'vDesc dos XMLs')}${metricPanel('Frete destacado', data.freightValue, 'vFrete dos XMLs')}${metricPanel('Ticket médio por NF-e', data.invoiceCount ? data.value / data.invoiceCount : 0, 'Valor total ÷ NF-e')}</article>` +
-    `<p class="nfe-note">A venda financeira é calculada por item e CFOP elegível. O saldo usa devoluções recebidas com referência confirmada a venda integralmente financeira da mesma empresa e do mesmo CNPJ. Cancelamentos já estão excluídos e não são abatidos outra vez. O markup de referência cobre apenas itens com compra anterior conciliada; não representa margem contábil.</p>`;
+    `<p class="nfe-note">A venda financeira é calculada por item e CFOP elegível. O saldo usa as devoluções registradas nas notas de venda do Falco; na ausência dessa cobertura, usa as entradas com vínculo fiscal confirmado. Cancelamentos já estão excluídos e não são abatidos outra vez. O markup de referência cobre apenas itens com compra anterior conciliada; não representa margem contábil.</p>`;
 }
 function fiscalEventCards(outgoing, incoming) {
   const returns = incoming?.returns || {};
@@ -2227,6 +2227,13 @@ async function openInvoice(key, type, companyId, canceled = false) {
       : '');
   $('#detail-dialog').showModal();
 }
+document.addEventListener(
+  'toggle',
+  (event) => {
+    if (event.target.matches?.('.fiscal-analysis')) state.fiscalAnalysisOpen = event.target.open;
+  },
+  true
+);
 document.addEventListener('click', (e) => {
   const deleteEquivalence = e.target.closest('[data-equivalence-delete]');
   if (deleteEquivalence) {

@@ -174,8 +174,7 @@ test('dashboard e faturamento têm um único resumo e detalhes expansíveis, sem
     assert.ok(!html.includes('class="kpis"'));
     assert.ok(!html.includes('Devoluções captadas no SEFAZ'));
     assert.ok(!html.includes('class="fiscal-event-grid"'));
-    if (render === 'revenueDashboard')
-      assert.match(html, /<details class="panel fiscal-analysis">/);
+    if (render === 'revenueDashboard') assert.match(html, /<details class="panel fiscal-analysis"/);
   }
   rendered.state.params = new URLSearchParams(
     'inicio=2026-09-01&vendedorNfe=Ana&operacao=devolvidas&tipoDevolucao=venda'
@@ -184,4 +183,11 @@ test('dashboard e faturamento têm um único resumo e detalhes expansíveis, sem
   assert.ok(!link.includes('operacao='));
   assert.ok(!link.includes('tipoDevolucao='));
   assert.ok(link.includes('vendedorNfe=Ana'));
+});
+
+test('conciliação aberta permanece aberta ao atualizar o faturamento', () => {
+  const r = renderFiscalViews([], []);
+  r.state.fiscalAnalysisOpen = true;
+  vm.runInContext('revenueDashboard()', r.context);
+  assert.match(r.nodes.get('#page').innerHTML, /<details class="panel fiscal-analysis" open>/);
 });
