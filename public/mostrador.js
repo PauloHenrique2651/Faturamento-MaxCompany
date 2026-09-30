@@ -100,7 +100,9 @@ function falcoMetrics(outgoing, selectedCompany) {
     gross,
     returned,
     net: gross - returned,
-    invoices: sum(invoices, 'count'),
+    invoices: outgoing.salesReturns?.available
+      ? outgoing.salesReturns.invoiceCount
+      : sum(invoices, 'count'),
     orders: sum(commercial, 'orders'),
     profitabilityAvailable: profitability.length > 0,
     profitabilityGross: sum(profitability, 'gross'),
@@ -270,7 +272,15 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
     period,
     selectedCompany ? Number(selectedCompany) : null
   );
-  const falco = falcoMetrics(outgoing, selectedCompany);
+  const hasEntityFilter = [
+    'vendedorNfe',
+    'clienteNfe',
+    'grupoClienteNfe',
+    'produtoNfe',
+    'cfop',
+    'efeito'
+  ].some((key) => params.has(key));
+  const falco = hasEntityFilter ? null : falcoMetrics(outgoing, selectedCompany);
   const slide = options.slide || 0;
   const sort = options.sort || 'net';
   const fresh =

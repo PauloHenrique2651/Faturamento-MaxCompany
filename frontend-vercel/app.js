@@ -1484,9 +1484,21 @@ function maserpMetrics(data) {
   const selectedCompany = Number(state.params.get('empresa') || 0);
   const ids = { 1: 1, 3: 2, 5: 3, 6: 4 };
   const names = { 1: 'MaxPlast', 2: 'MaxSafety', 3: 'MaxSupply', 4: 'MaxSupply · Filial ES' };
-  const invoiceRows = (report.companies || []).filter(
+  let invoiceRows = (report.companies || []).filter(
     (row) => !selectedCompany || ids[row.companyCode] === selectedCompany
   );
+  if (data.salesReturns?.available)
+    invoiceRows = invoiceRows.map((row) => {
+      const notes = (data.documents || []).filter(
+        (note) => !note.canceled && note.erp?.normalSale && note.companyId === ids[row.companyCode]
+      );
+      return {
+        ...row,
+        count: notes.length,
+        gross: notes.reduce((sum, note) => sum + note.erp.gross, 0),
+        returned: notes.reduce((sum, note) => sum + note.erp.returnedValue, 0)
+      };
+    });
   const commercialRows = (report.commercial || []).filter(
     (row) => !selectedCompany || ids[row.companyCode] === selectedCompany
   );
