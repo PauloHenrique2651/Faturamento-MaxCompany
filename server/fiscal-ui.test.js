@@ -1,3 +1,8 @@
+import {
+  registeredSalesReturns,
+  saleReturnsValue,
+  returnKind
+} from '../public/lib/erp-documents.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -94,6 +99,9 @@ export function renderFiscalViews(
     cfopDescription,
     reconcilePurchases,
     purchaseSuggestions,
+    registeredSalesReturns,
+    saleReturnsValue,
+    returnKind,
     confirmedFinancialReturn,
     FINANCIAL_CFOPS,
     commercialPerformance,

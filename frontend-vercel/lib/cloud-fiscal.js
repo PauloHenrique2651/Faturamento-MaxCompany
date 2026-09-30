@@ -4,10 +4,12 @@ import {
   financialSaleItemValue,
   confirmedFinancialReturn
 } from './financial-cfops.js';
+import { returnKind } from './erp-documents.js';
 
 const money = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const normalized = (value) =>
   String(value || '')
+    .trim()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase();
@@ -40,11 +42,13 @@ export function scopedDocuments(rows, params) {
           : params.get('efeito') === 'nao-financeiro'
             ? financialDocument(row).nonFinancialValue > 0
             : financialDocument(row).pendingValue > 0)) &&
-      (!params.get('clienteNfe') || row.customer?.id === params.get('clienteNfe')) &&
+      (!params.get('clienteNfe') ||
+        (row.customer?.id || row.saleReference?.customer?.id) === params.get('clienteNfe')) &&
       (!params.get('grupoClienteNfe') ||
-        customerGroupFor(row).id === params.get('grupoClienteNfe')) &&
+        customerGroupFor(row.saleReference || row).id === params.get('grupoClienteNfe')) &&
       (!params.get('vendedorNfe') ||
-        normalized(row.seller) === normalized(params.get('vendedorNfe'))) &&
+        normalized(row.seller || row.saleReference?.seller) ===
+          normalized(params.get('vendedorNfe'))) &&
       (!params.get('produtoNfe') ||
         invoiceItems(row).some((item) => (item.code || item.name) === params.get('produtoNfe')))
   );
@@ -108,6 +112,7 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
     regime.value += Number(row.value) || 0;
     regimes.set(row.company, regime);
     if (sale) {
+      const returned = Number(row.erp?.returnedValue || 0);
       const customer = add(
         customers,
         party.id || party.name,
@@ -115,6 +120,7 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
         saleValue
       );
       customer.registrations.add(party.name);
+      customer.returnedValue = (customer.returnedValue || 0) + returned;
       const identity = customerGroupFor(row);
       const group = add(
         groups,
@@ -124,16 +130,18 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
       );
       group.cnpjs.add(party.id);
       group.registrations.add(party.name);
-      if (row.seller)
-        add(
+      group.returnedValue = (group.returnedValue || 0) + returned;
+      if (row.seller) {
+        const seller = add(
           sellers,
           normalized(row.seller),
           { id: normalized(row.seller), name: row.seller },
           saleValue
         );
-      else unattributedCount++;
+        seller.returnedValue = (seller.returnedValue || 0) + returned;
+      } else unattributedCount++;
     }
-    for (const item of items) {
+    for (const [index, item] of items.entries()) {
       add(
         cfops,
         item.cfop || 'Não informado',
@@ -141,19 +149,30 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
         item.value,
         item.quantity
       );
-      if (sale && financialSaleItemValue(row, item) > 0)
-        add(
+      if (sale && financialSaleItemValue(row, item) > 0) {
+        const product = add(
           products,
           row.company + ':' + (item.code || item.name),
           { id: item.code || item.name, name: item.name, company: row.company },
           financialSaleItemValue(row, item),
           item.quantity
         );
+        const returnedItem = row.erp?.returnedItems?.find(
+          (value) => Number(value.sequence) === Number(item.sequence || index + 1)
+        );
+        product.returnedValue =
+          (product.returnedValue || 0) + Number(returnedItem?.returnedValue || 0);
+      }
     }
   }
   const ranked = (map) =>
     [...map.values()]
-      .map((row) => ({ ...row, value: money(row.value) }))
+      .map((row) => ({
+        ...row,
+        value: money(row.value),
+        returnedValue: money(row.returnedValue),
+        netValue: money(row.value - (row.returnedValue || 0))
+      }))
       .sort((a, b) => b.value - a.value);
   const returns = documents.filter((row) => row.fiscalOperation?.type === 'return');
   const returnValue = money(returns.reduce((sum, row) => sum + row.value, 0));
@@ -199,6 +218,8 @@ export function fiscalBreakdown(documents, daily, scope = {}) {
       count: returns.length,
       value: returnValue,
       documents: returns,
+      purchaseDocuments: returns.filter((row) => returnKind(row) === 'purchase'),
+      salesDocuments: returns.filter((row) => returnKind(row) === 'sales'),
       itemCount: returns.reduce((sum, row) => sum + invoiceItems(row).length, 0),
       quantity: money(
         returns.reduce(

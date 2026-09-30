@@ -2,6 +2,7 @@ import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } fr
 import { promisify } from 'node:util';
 import { fiscalBreakdown, scopedDocuments, searchDocuments } from '../lib/cloud-fiscal.js';
 import { classifyFiscalOperation } from '../lib/fiscal-operation.js';
+import { registeredSalesReturns } from '../lib/erp-documents.js';
 import {
   financialDocument,
   financialSaleValue,
@@ -229,6 +230,7 @@ function documentFromCloud(row) {
         ? { id: row.counterparty_id, name: row.counterparty_name }
         : undefined),
     seller: source.seller || row.seller || null,
+    erp: source.erp || null,
     operation: source.operation || row.operation_name || null,
     purpose: source.purpose || row.purpose || null,
     fiscalOperation: row.is_full_xml
@@ -503,6 +505,7 @@ function baseSummary(rows, inicio, fim, direction, scope = {}) {
   };
   if (direction === 'outgoing') {
     Object.assign(result, fiscalBreakdown(documents, series, scope));
+    result.salesReturns = registeredSalesReturns(documents);
   } else {
     result.suppliers = ranked(parties);
     const purchases = documents.filter((row) => financialPurchaseValue(row) > 0);

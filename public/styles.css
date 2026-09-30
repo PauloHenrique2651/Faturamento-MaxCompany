@@ -2383,3 +2383,12 @@ a.commercial-card:focus-visible {
     display: block;
   }
 }
+.document-return-values {
+  display: block;
+  margin-top: 7px;
+  color: #a15f0b;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: normal;
+}

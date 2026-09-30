@@ -1,6 +1,16 @@
 // A finalidade da NF-e é a evidência principal. CFOP e natureza refinam a
 // classificação gerencial; ausência de evidência nunca é promovida a venda.
 const outgoingReturnCfops = new Set([
+  '1201',
+  '1202',
+  '2201',
+  '2202',
+  '3201',
+  '3202',
+  '1410',
+  '1411',
+  '2410',
+  '2411',
   '5201',
   '5202',
   '6201',
@@ -98,7 +108,8 @@ function category(cfop) {
 
 export function classifyFiscalOperation({ purpose, operation, items = [] }) {
   const cfops = [...new Set(items.map((item) => String(item.cfop || '')).filter(Boolean))];
-  if (String(purpose) === '4') return { type: 'return', evidence: 'finNFe=4', cfops };
+  const returnKind = cfops.some((code) => /^[123]/.test(code)) ? 'sales' : 'purchase';
+  if (String(purpose) === '4') return { type: 'return', returnKind, evidence: 'finNFe=4', cfops };
   if (String(purpose) === '2') return { type: 'complementary', evidence: 'finNFe=2', cfops };
   if (String(purpose) === '3') return { type: 'adjustment', evidence: 'finNFe=3', cfops };
   const name = String(operation || '')
@@ -118,5 +129,5 @@ export function classifyFiscalOperation({ purpose, operation, items = [] }) {
     'industrial-return': 'CFOP de retorno de industrialização',
     other: String(purpose) === '1' ? 'CFOP fora das regras comerciais' : 'finalidade não informada'
   }[type];
-  return { type, evidence, cfops };
+  return { type, evidence, cfops, ...(type === 'return' ? { returnKind } : {}) };
 }

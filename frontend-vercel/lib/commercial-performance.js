@@ -1,3 +1,4 @@
+import { registeredSalesReturns } from './erp-documents.js';
 import { financialSaleValue, confirmedFinancialReturn } from './financial-cfops.js';
 
 const round = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -102,11 +103,14 @@ export function proratedTarget(targets, scopeType, scopeKey, start, end) {
 export function commercialPerformance(outgoing, incoming, targets, period, companyId = null) {
   const docs = outgoing?.documents || [];
   const sales = docs.filter((row) => financialSaleValue(row) > 0);
-  const returns = (incoming?.returns?.documents || []).filter(
-    (row) => confirmedFinancialReturn(row) > 0
-  );
+  const erpReturns = registeredSalesReturns(docs);
+  const returns = erpReturns.available
+    ? erpReturns.documents
+    : (incoming?.returns?.documents || []).filter((row) => confirmedFinancialReturn(row) > 0);
+  const returnValue = (row) =>
+    erpReturns.available ? Number(row.erp.returnedValue || 0) : confirmedFinancialReturn(row);
   const gross = round(sales.reduce((sum, row) => sum + financialSaleValue(row), 0));
-  const returned = round(returns.reduce((sum, row) => sum + confirmedFinancialReturn(row), 0));
+  const returned = round(returns.reduce((sum, row) => sum + returnValue(row), 0));
   const net = round(gross - returned);
   const scopeType = companyId ? 'company' : 'group';
   const scopeKey = companyId ? String(companyId) : 'group';
@@ -130,7 +134,7 @@ export function commercialPerformance(outgoing, incoming, targets, period, compa
   }
   for (const row of returns) {
     const day = byDay.get(row.date);
-    if (day) day.returns += confirmedFinancialReturn(row);
+    if (day) day.returns += returnValue(row);
   }
   let cumulative = 0;
   const daily = [...byDay.values()].map((day) => {
@@ -164,14 +168,14 @@ export function commercialPerformance(outgoing, incoming, targets, period, compa
     bySeller.set(key, seller);
   }
   for (const row of returns) {
-    const original = saleByKey.get(row.saleReference?.key);
+    const original = erpReturns.available ? row : saleByKey.get(row.saleReference?.key);
     if (!original?.seller) continue;
     const key = original.seller
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase();
     const seller = bySeller.get(key);
-    if (seller) seller.returns += confirmedFinancialReturn(row);
+    if (seller) seller.returns += returnValue(row);
   }
   const sellers = [...bySeller.values()]
     .map((row) => ({

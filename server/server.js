@@ -21,6 +21,8 @@ import { salesTargetsRoute } from './sales-targets.js';
 import { sellerCommissionsRoute } from './seller-commissions.js';
 import { equivalencesRoute } from './product-equivalences.js';
 import { baseSummary } from '../frontend-vercel/api/[...path].js';
+import { readMaserpInvoiceStates } from './maserp-report.js';
+import { applyInvoiceStates } from '../public/lib/erp-documents.js';
 import { scopedDocuments } from '../frontend-vercel/lib/cloud-fiscal.js';
 import {
   authenticate,
@@ -39,7 +41,26 @@ const host = process.env.HOST || '0.0.0.0';
 const refreshSeconds = Math.max(10, Number(process.env.MASERP_REFRESH_SECONDS || 30));
 const cache = new Map();
 
-function financializeSummary(summary, direction, params) {
+async function invoiceStates() {
+  return cached('erp-invoice-states', () =>
+    readMaserpInvoiceStates(
+      '2020-01-01',
+      new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    )
+  );
+}
+
+async function financializeSummary(summary, direction, params) {
+  if (direction === 'outgoing') {
+    const states = await invoiceStates();
+    if (states.available) {
+      summary.documents = applyInvoiceStates(summary.documents || [], states.documents);
+      summary.canceledDocuments = applyInvoiceStates(
+        summary.canceledDocuments || [],
+        states.documents
+      );
+    }
+  }
   const rows = scopedDocuments(
     [...(summary.documents || []), ...(summary.canceledDocuments || [])],
     params
@@ -148,6 +169,14 @@ async function api(req, res, url, user) {
       (formato === 'danfe' && !document.xml)
     )
       return json(res, 404, { error: 'Documento não encontrado' });
+    if (formato === 'json' && tipo === 'saida' && document) {
+      const states = await invoiceStates();
+      if (states.available)
+        document.row = applyInvoiceStates(
+          [{ ...document.row, companyId: empresa, key: chave }],
+          states.documents
+        )[0];
+    }
     if (formato === 'json')
       return json(res, 200, {
         ...document.row,
@@ -199,8 +228,8 @@ async function api(req, res, url, user) {
     };
     if (Object.values(scope).some((value) => value && (value.length > 100 || /[<>]/.test(value))))
       return json(res, 400, { error: 'Filtro inválido' });
-    const summary = financializeSummary(
-      await readNfeSummary(filters.inicio, filters.fim, filters.empresa, scope),
+    const summary = await financializeSummary(
+      await readNfeSummary(filters.inicio, filters.fim, filters.empresa),
       'outgoing',
       url.searchParams
     );
@@ -257,7 +286,7 @@ async function api(req, res, url, user) {
     }
     if (filters.empresa !== null && ![1, 2, 3, 4].includes(filters.empresa))
       return json(res, 400, { error: 'Empresa inválida' });
-    const summary = financializeSummary(
+    const summary = await financializeSummary(
       await readIncomingSummary(filters.inicio, filters.fim, filters.empresa),
       'incoming',
       url.searchParams
@@ -580,21 +609,25 @@ function syncSefaz() {
     sefazSyncRunning = false;
   });
 }
-syncSefaz();
 const configuredSefazCheckSeconds = Number(process.env.SEFAZ_CHECK_SECONDS || 60);
 const sefazCheckSeconds = Number.isFinite(configuredSefazCheckSeconds)
   ? Math.max(60, configuredSefazCheckSeconds)
   : 60;
-setInterval(syncSefaz, sefazCheckSeconds * 1000);
 
 function syncSupabase() {
   syncSupabaseFromFalco().catch((error) =>
     console.error('Falha na sincronização Supabase:', error.message || error.name)
   );
 }
-syncSupabase();
 const configuredSupabaseSyncSeconds = Number(process.env.SUPABASE_SYNC_SECONDS || 60);
 const supabaseSyncSeconds = Number.isFinite(configuredSupabaseSyncSeconds)
   ? Math.max(60, configuredSupabaseSyncSeconds)
   : 60;
-setInterval(syncSupabase, supabaseSyncSeconds * 1000);
+// O coletor autônomo do servidor é o publicador padrão. Abrir uma instância
+// local para desenvolvimento não pode sobrescrever o retrato da produção.
+if (process.env.CRM_BACKGROUND_SYNC === 'true') {
+  syncSefaz();
+  setInterval(syncSefaz, sefazCheckSeconds * 1000);
+  syncSupabase();
+  setInterval(syncSupabase, supabaseSyncSeconds * 1000);
+}

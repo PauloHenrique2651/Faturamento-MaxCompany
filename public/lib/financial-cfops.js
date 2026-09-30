@@ -87,6 +87,9 @@ export function financialDocument(row) {
 }
 
 export function financialSaleValue(row) {
+  // A conciliação do ERP prevalece sobre o XML original para a venda emitida.
+  // A análise financeira de cada CFOP continua disponível separadamente nos itens.
+  if (row.erp) return !row.canceled && row.erp.normalSale ? Number(row.erp.gross || 0) : 0;
   if (
     row.canceled ||
     ['return', 'transfer', 'industrial-return', 'bonus', 'complementary', 'adjustment'].includes(

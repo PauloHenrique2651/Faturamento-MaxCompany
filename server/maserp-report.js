@@ -5,6 +5,78 @@ const defaultConfigPath = '\\\\maxcompany\\DEPLOY\\Falco Atualizador-Deploy\\CON
 const companyCodes = [1, 3, 5, 6];
 let poolPromise;
 
+async function getMaserpPool() {
+  const settings = databaseSettings();
+  if (!settings) throw new Error('MASERP não configurado');
+  if (!poolPromise) {
+    poolPromise = new sql.ConnectionPool(settings).connect().catch((error) => {
+      poolPromise = undefined;
+      throw error;
+    });
+  }
+  return poolPromise;
+}
+
+// Estado compacto das notas: alterações de devolução/cancelamento são revistas
+// mesmo quando o XML original não mudou ou pertence a um período anterior.
+export async function readMaserpInvoiceStates(startDate, endDate) {
+  try {
+    const pool = await getMaserpPool();
+    const request = pool.request();
+    request.input('start', sql.Date, startDate);
+    request.input('end', sql.Date, endDate);
+    const result = await request.query(`
+      SELECT n.emp_empresa_IN companyCode, n.not_numero_IN number,
+        n.not_serie_VC series, n.not_chavenotafiscaleletronica_VC accessKey,
+        CONVERT(varchar(10),n.not_dataemissao_DT,23) date,
+        n.not_totalgeral_MN gross, ISNULL(n.not_cancelada_BT,0) canceled,
+        n.not_cfop_SI cfop, n.cli_cliente_IN customerCode,
+        n.cli_cpfcnpj_VC customerId, n.cli_nomerazao customerName,
+        n.not_vendedorinterno_IN sellerCode, v.ven_nome sellerName,
+        n.ped_pedido_IN orderNumber,n.ped_serie_CH orderSeries,
+        CASE WHEN ISNULL(n.ehnotadesaidanormal,0)=1 AND ISNULL(n.cfo_venda_BT,0)=1
+          AND ISNULL(n.not_complementar_BT,0)=0 AND ISNULL(n.not_denegada_BT,0)=0
+          THEN 1 ELSE 0 END normalSale,
+        ISNULL(r.returnedValue,0) returnedValue
+      FROM notafiscalsaida_V n
+      LEFT JOIN vendedor v ON v.ven_codigo=n.not_vendedorinterno_IN
+      OUTER APPLY (
+        SELECT SUM(CONVERT(decimal(18,2),ISNULL(i.ite_quantidadedevolvida_NM,0)*ISNULL(i.ite_preco_MN,0))) returnedValue
+        FROM itensnotafiscalsaida_T i WHERE i.emp_empresa_IN=n.emp_empresa_IN AND i.not_numero_IN=n.not_numero_IN
+      ) r
+      WHERE n.emp_empresa_IN IN (${companyCodes.join(',')})
+        AND n.not_dataemissao_DT>=@start AND n.not_dataemissao_DT<DATEADD(day,1,@end)
+        AND LEN(n.not_chavenotafiscaleletronica_VC)=44;
+      SELECT i.emp_empresa_IN companyCode,i.not_numero_IN number,i.ite_sequencia_IN sequence,
+        i.ite_quantidadedevolvida_NM returnedQuantity,
+        CONVERT(decimal(18,2),ISNULL(i.ite_quantidadedevolvida_NM,0)*ISNULL(i.ite_preco_MN,0)) returnedValue
+      FROM itensnotafiscalsaida_T i JOIN notafiscalsaida_T n ON n.emp_empresa_IN=i.emp_empresa_IN AND n.not_numero_IN=i.not_numero_IN
+      WHERE n.emp_empresa_IN IN (${companyCodes.join(',')}) AND n.not_dataemissao_DT>=@start
+        AND n.not_dataemissao_DT<DATEADD(day,1,@end) AND ISNULL(i.ite_quantidadedevolvida_NM,0)>0;
+    `);
+    const items = new Map();
+    for (const row of result.recordsets[1] || []) {
+      const key = `${row.companyCode}/${row.number}`;
+      const list = items.get(key) || [];
+      list.push(row);
+      items.set(key, list);
+    }
+    return {
+      available: true,
+      documents: (result.recordsets[0] || []).map((row) => ({
+        ...row,
+        accessKey: String(row.accessKey).trim(),
+        sellerName: String(row.sellerName || '').trim(),
+        normalSale: Boolean(row.normalSale),
+        canceled: Boolean(row.canceled),
+        returnedItems: items.get(`${row.companyCode}/${row.number}`) || []
+      }))
+    };
+  } catch {
+    return { available: false, documents: [] };
+  }
+}
+
 function databaseSettings() {
   let saved = {};
   try {
@@ -81,6 +153,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         AND ISNULL(n.cfo_venda_BT,0)=1
         AND ISNULL(n.not_cancelada_BT,0)=0
         AND ISNULL(n.not_complementar_BT,0)=0
+        AND ISNULL(n.not_denegada_BT,0)=0
       GROUP BY n.emp_empresa_IN
 
       ;WITH commercial_lines AS (
@@ -92,6 +165,11 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
           ISNULL(i.ite_produtosemgiro_BT,0) without_rotation,
           billed.cost_unit,
           billed.invoice_linked,
+          CASE WHEN ISNULL(billed.quantity,0)>ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0)
+            THEN ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0)
+            ELSE ISNULL(billed.quantity,0) END billed_quantity,
+          ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0) active_quantity,
+          ISNULL(i.ite_preco_MN,0) unit_price,
           CONVERT(decimal(18,2), ISNULL(i.ite_quantidade_NM,0) * ISNULL(billed.cost_unit,0)) billed_cost
         FROM pedido_T p
         INNER JOIN itenspedido_T i ON i.emp_empresa_IN=p.emp_empresa_IN
@@ -99,8 +177,9 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         INNER JOIN configuracaoentradasaida_T operation ON operation.ces_codigo_IN=p.ped_configuracaoentradasaida_IN
         LEFT JOIN clientejuridica customer ON customer.cli_codigo=p.cli_cliente_IN
         OUTER APPLY (
-          SELECT TOP 1 item_invoice.ite_customediobrutoporitem_MN cost_unit,
-            CONVERT(bit,1) invoice_linked
+          SELECT MAX(item_invoice.ite_customediobrutoporitem_MN) cost_unit,
+            CONVERT(bit,CASE WHEN COUNT(*)>0 THEN 1 ELSE 0 END) invoice_linked,
+            SUM(link.inp_quantidadeitempedido_NM) quantity
           FROM itensnotafiscalsaida_T_itenspedidovenda_T link
           INNER JOIN notafiscalsaida_T invoice ON invoice.emp_empresa_IN=link.inp_empresanotafiscal_IN
             AND invoice.not_numero_IN=link.inp_notafiscalsaida_IN
@@ -115,11 +194,12 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
             AND ISNULL(invoice.not_cancelada_BT,0)=0
             AND ISNULL(invoice.not_complementar_BT,0)=0
             AND ISNULL(invoice.not_denegada_BT,0)=0
-          ORDER BY invoice.not_dataemissao_DT DESC
+            AND invoice.not_dataemissao_DT<@endExclusive
         ) billed
         WHERE p.emp_empresa_IN IN (${companyCodes.join(',')})
           AND p.ped_datainclusao_DT >= @startDate AND p.ped_datainclusao_DT < @endExclusive
           AND ISNULL(p.ped_excluido_BT,0)=0
+          AND ISNULL(i.ite_cancelado_BT,0)=0
           AND ISNULL(operation.ces_venda_BT,0)=1
           AND NOT EXISTS (
             SELECT 1 FROM empresa_T group_company WHERE group_company.emp_CNPJ_CH=customer.cli_cnpj
@@ -136,8 +216,11 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         SUM(CASE WHEN invoice_linked=1 AND cost_unit IS NOT NULL THEN billed_cost ELSE 0 END) billed_cost,
         SUM(CASE WHEN invoice_linked=1 AND without_rotation=0 THEN sale_value ELSE 0 END) billed_with_rotation,
         SUM(CASE WHEN invoice_linked=1 AND without_rotation=1 THEN sale_value ELSE 0 END) billed_without_rotation
+        ,SUM(CONVERT(decimal(18,2),CASE WHEN active_quantity>billed_quantity THEN (active_quantity-billed_quantity)*unit_price ELSE 0 END)) pending_value
+        ,COUNT(DISTINCT CASE WHEN active_quantity>billed_quantity THEN CONCAT(company_code,'|',order_number,'|',order_series) END) pending_orders
       FROM commercial_lines
       GROUP BY company_code
+
     `);
     const profitabilityRequest = pool.request();
     profitabilityRequest.input('empresa_VC', sql.VarChar(sql.MAX), companyCodes.join(','));
@@ -198,6 +281,9 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       ]);
     const invoiceRows = result.recordsets[0] || [];
     const commercialRows = result.recordsets[1] || [];
+    const issuedCommercial = new Map(
+      invoiceRows.map((row) => [Number(row.company_code), Number(row.gross_value || 0)])
+    );
     const profitabilityInvoices = profitabilityResult.recordsets?.[1] || [];
     const sellerProfitabilityInvoices = sellerProfitabilityResult.recordsets?.[1] || [];
     const profitabilityByCompany = new Map();
@@ -268,7 +354,10 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         salesCost: Number(row.sales_cost || 0),
         salesWithRotation: Number(row.sales_with_rotation || 0),
         salesWithoutRotation: Number(row.sales_without_rotation || 0),
-        billed: Number(row.billed_value || 0),
+        billed: issuedCommercial.get(Number(row.company_code)) || 0,
+        cohortBilled: Number(row.billed_value || 0),
+        pending: Number(row.pending_value || 0),
+        pendingOrders: Number(row.pending_orders || 0),
         billedCostCoverage: Number(row.billed_cost_coverage || 0),
         billedCost: Number(row.billed_cost || 0),
         billedWithRotation: Number(row.billed_with_rotation || 0),

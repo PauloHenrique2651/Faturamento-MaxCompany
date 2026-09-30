@@ -4,7 +4,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderDanfe } from './danfe.js';
-import { readMaserpSalesSnapshot } from './maserp-report.js';
+import { readMaserpSalesSnapshot, readMaserpInvoiceStates } from './maserp-report.js';
+import { applyInvoiceStates } from '../public/lib/erp-documents.js';
 import { readNfeSummary, readOutgoingDocument } from './nfe-files.js';
 import {
   readIncomingDocument,
@@ -155,6 +156,69 @@ export function normalizeCloudDocument(row, direction) {
     source_payload: row,
     source_updated_at: new Date().toISOString(),
     synced_at: new Date().toISOString()
+  };
+}
+
+async function syncInvoiceStateChanges(states, state, alreadySent) {
+  const fingerprints = state.erpFingerprints || {};
+  const sent = new Set(alreadySent.map((row) => row.key));
+  const digest = (row) => createHash('sha256').update(JSON.stringify(row)).digest('hex');
+  const changed = states.filter((row) => fingerprints[row.accessKey] !== digest(row));
+  for (const row of changed.filter((row) => sent.has(row.accessKey)))
+    fingerprints[row.accessKey] = digest(row);
+  const pending = changed
+    .filter((row) => !sent.has(row.accessKey))
+    .sort(
+      (a, b) =>
+        Number(Boolean(fingerprints[b.accessKey])) - Number(Boolean(fingerprints[a.accessKey])) ||
+        Number(b.returnedValue > 0) - Number(a.returnedValue > 0)
+    );
+  // Revisão histórica em lotes; mudanças recentes vêm antes do backfill.
+  const batch = pending.slice(0, 150);
+  if (batch.length) {
+    const raw = await request(
+      `/rest/v1/fiscal_documents?direction=eq.outgoing&access_key=in.(${batch.map((row) => row.accessKey).join(',')})&select=company_id,access_key,source_payload,seller,is_canceled`
+    );
+    const updates = (raw || []).map((row) => {
+      const source = applyInvoiceStates(
+        [{ ...row.source_payload, companyId: row.company_id, key: row.access_key }],
+        batch
+      )[0];
+      return {
+        company_id: row.company_id,
+        direction: 'outgoing',
+        access_key: row.access_key,
+        source_payload: source,
+        seller: source.seller || row.seller,
+        is_canceled: source.canceled
+      };
+    });
+    // PATCH mantém artefatos e campos fiscais; nunca recria documentos incompletos.
+    for (let offset = 0; offset < updates.length; offset += 4)
+      await Promise.all(
+        updates.slice(offset, offset + 4).map((row) =>
+          request(
+            `/rest/v1/fiscal_documents?company_id=eq.${row.company_id}&direction=eq.outgoing&access_key=eq.${row.access_key}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                source_payload: row.source_payload,
+                seller: row.seller,
+                is_canceled: row.is_canceled,
+                synced_at: new Date().toISOString()
+              })
+            }
+          )
+        )
+      );
+    for (const row of batch) fingerprints[row.accessKey] = digest(row);
+  }
+  state.erpFingerprints = fingerprints;
+  return {
+    reviewed: states.length,
+    changed: changed.length,
+    pending: Math.max(0, pending.length - batch.length)
   };
 }
 
@@ -415,10 +479,11 @@ export async function syncSupabaseFromFalco() {
       !state.metadataInitialized ||
       !state.lastFullScanAt ||
       Date.now() - Date.parse(state.lastFullScanAt) > 6 * 3600_000;
-    const start =
+    let start =
       state.lastSuccessAt && !fullScan
         ? [settings.startDate, shiftDays(end, -settings.lookbackDays)].sort().at(-1)
         : settings.startDate;
+    if (!fullScan && start > `${end.slice(0, 7)}-01`) start = `${end.slice(0, 7)}-01`;
     await request('/rest/v1/crm_sync_runs?source=eq.falco-local&status=eq.running', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
@@ -434,12 +499,22 @@ export async function syncSupabaseFromFalco() {
       body: JSON.stringify({ source: 'falco-local', status: 'running', details: { start, end } })
     });
     runId = created?.[0]?.id || null;
-    const [outgoing, incoming, sefaz, maserpSales] = await Promise.all([
+    const [outgoing, incoming, sefaz, maserpSales, invoiceStates] = await Promise.all([
       readNfeSummary(start, end),
       readIncomingSummary(start, end),
       readIncomingSyncStatus(),
-      readMaserpSalesSnapshot(`${end.slice(0, 7)}-01`, end)
+      readMaserpSalesSnapshot(`${end.slice(0, 7)}-01`, end),
+      readMaserpInvoiceStates(settings.startDate, end)
     ]);
+    if (!invoiceStates.available)
+      throw new Error('Revisão MASERP indisponível; preservado último conjunto confirmado');
+    if (invoiceStates.available) {
+      outgoing.documents = applyInvoiceStates(outgoing.documents, invoiceStates.documents);
+      outgoing.canceledDocuments = applyInvoiceStates(
+        outgoing.canceledDocuments,
+        invoiceStates.documents
+      );
+    }
     const userCount = await syncUsers();
     const outgoingRows = [...outgoing.documents, ...outgoing.canceledDocuments].map((row) =>
       normalizeCloudDocument(row, 'outgoing')
@@ -452,6 +527,12 @@ export async function syncSupabaseFromFalco() {
       state.documentFingerprints
     );
     await upsertDocuments(changes.changed);
+    const erpReconciliation = invoiceStates.available
+      ? await syncInvoiceStateChanges(invoiceStates.documents, state, [
+          ...outgoing.documents,
+          ...outgoing.canceledDocuments
+        ])
+      : { available: false };
     state.documentFingerprints = changes.fingerprints;
     state.artifactQueue = mergeArtifactQueue(
       [...outgoing.documents, ...outgoing.canceledDocuments],
@@ -520,6 +601,7 @@ export async function syncSupabaseFromFalco() {
       incomingSources: `${incoming.sourcesAvailable}/${incoming.sourcesTotal}`,
       sefaz,
       maserpSales,
+      erpReconciliation,
       artifactAttempts,
       artifactErrors,
       generatedDanfeCount,

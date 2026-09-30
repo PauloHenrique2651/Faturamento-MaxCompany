@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { baseSummary, documentFromCloud } from '../frontend-vercel/api/[...path].js';
+import { saleReturnsValue } from '../public/lib/erp-documents.js';
 
 const { url, secretKey } = JSON.parse(
   await readFile(new URL('../data/supabase/config.json', import.meta.url), 'utf8')
@@ -53,7 +54,8 @@ for (const row of incoming.filter((item) => item.fiscalOperation?.type === 'retu
 const salesSummary = baseSummary(outgoing, start, end, 'outgoing');
 const purchaseSummary = baseSummary(incoming, start, end, 'incoming');
 const real =
-  Math.round((salesSummary.saleValue - purchaseSummary.returns.linkedToSaleValue) * 100) / 100;
+  Math.round((salesSummary.saleValue - saleReturnsValue(salesSummary, purchaseSummary)) * 100) /
+  100;
 console.log(
   JSON.stringify(
     {
@@ -64,6 +66,7 @@ console.log(
       fiscalIssuedValue: salesSummary.value,
       financialSales: salesSummary.saleValue,
       confirmedFinancialReturns: purchaseSummary.returns.linkedToSaleValue,
+      registeredSalesReturns: salesSummary.salesReturns?.value,
       realRevenue: real,
       financialPurchases: purchaseSummary.purchaseValue,
       nonFinancialItems: salesSummary.nonFinancialValue,

@@ -27,10 +27,14 @@ function checkSefaz() {
           'powershell.exe'
         )
       : 'pwsh');
-  const child = spawn(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-MaxBatches', '20'], {
-    windowsHide: true,
-    stdio: ['ignore', 'inherit', 'inherit']
-  });
+  const child = spawn(
+    powershell,
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-MaxBatches', '20'],
+    {
+      windowsHide: true,
+      stdio: ['ignore', 'inherit', 'inherit']
+    }
+  );
   child.on('error', (error) => {
     sefazRunning = false;
     console.error('Consulta SEFAZ não iniciada: ' + error.code);
