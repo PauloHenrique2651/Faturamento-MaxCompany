@@ -31,6 +31,30 @@ import { renderMostrador } from './mostrador.js';
 import { commercialPerformance, displayPeriod } from './lib/commercial-performance.js';
 import { confirmedFinancialReturn, FINANCIAL_CFOPS } from './lib/financial-cfops.js';
 import { purchaseSuggestions, reconcilePurchases } from './lib/purchase-match.js';
+const loadedBuild = document.querySelector('meta[name="crm-build"]')?.content;
+let checkingBuild = false;
+async function checkBuild() {
+  if (!loadedBuild || checkingBuild || document.hidden) return;
+  checkingBuild = true;
+  try {
+    const response = await fetch('/version.json', { cache: 'no-store' });
+    if (!response.ok) return;
+    const { version } = await response.json();
+    if (version && version !== loadedBuild) location.reload();
+  } catch {
+    // Uma falha de rede não interrompe a consulta; a próxima checagem tenta novamente.
+  } finally {
+    checkingBuild = false;
+  }
+}
+setInterval(checkBuild, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkBuild();
+});
+window.addEventListener('online', checkBuild);
+window.addEventListener('pageshow', checkBuild);
+window.addEventListener('focus', checkBuild);
+checkBuild();
 function href(view, changes = {}) {
   const p = new URLSearchParams(state.params);
   if (view !== 'busca') {
