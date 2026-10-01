@@ -2632,3 +2632,129 @@ a.commercial-card:focus-visible {
   font-size: clamp(24px, 2vw, 32px);
   font-variant-numeric: tabular-nums;
 }
+.order-panel {
+  border-radius: 18px;
+  overflow: hidden;
+}
+.order-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+  padding: 22px;
+  background: var(--surface, #f8fafc);
+}
+.order-totals span,
+.order-entry small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.order-totals strong {
+  display: block;
+  margin-top: 8px;
+  font-size: clamp(17px, 1.8vw, 24px);
+  overflow-wrap: anywhere;
+}
+.order-entry {
+  border-top: 1px solid var(--line);
+}
+.order-entry summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  cursor: pointer;
+  padding: 22px;
+}
+.order-entry summary:hover,
+.order-entry summary:focus-visible {
+  background: #eef5fa;
+}
+.order-entry summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.order-entry summary > div:first-child {
+  min-width: 0;
+}
+.order-entry summary span {
+  display: block;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.order-entry-amount {
+  flex-shrink: 0;
+  text-align: right;
+}
+.order-entry-amount small {
+  margin-top: 8px;
+}
+.order-detail {
+  padding: 0 22px 22px;
+}
+.order-detail .order-totals {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-radius: 12px;
+}
+.order-detail h3 {
+  margin: 22px 0 12px;
+  font-size: 14px;
+}
+.order-products > div {
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.order-products span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.order-products small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+}
+.order-products > div > strong {
+  flex-shrink: 0;
+}
+.order-invoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.display-order-total a {
+  color: inherit;
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .order-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 16px;
+    gap: 18px;
+  }
+  .order-entry summary {
+    padding: 16px;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .order-entry-amount {
+    text-align: left;
+  }
+  .order-detail {
+    padding: 0 16px 16px;
+  }
+  .order-detail .order-totals {
+    grid-template-columns: 1fr;
+  }
+  .order-panel .toolbar {
+    flex-wrap: wrap;
+  }
+  .order-panel .search-field {
+    width: 100%;
+    min-width: 0;
+  }
+  .order-panel select {
+    max-width: 100%;
+  }
+}

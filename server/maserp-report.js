@@ -1,4 +1,5 @@
 import { maserpCalendarDate } from './maserp-dates.js';
+import { orderId } from './order-files.js';
 import sql from 'mssql';
 import { readFileSync } from 'node:fs';
 
@@ -201,6 +202,9 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         SELECT p.emp_empresa_IN company_code,
           p.ped_pedido_IN order_number,
           p.ped_serie_CH order_series,
+          CONVERT(varchar(10),p.ped_datainclusao_DT,23) created_on,
+          p.cli_cliente_IN customer_code, customer_name.cli_nomerazao customer_name,
+          seller.ven_nome seller_name,
           CONVERT(decimal(18,2), (ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0)) * ISNULL(i.ite_preco_MN,0)) sale_value,
           CONVERT(decimal(18,2), (ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0)) * (ISNULL(i.ite_preco_MN,0) - ISNULL(i.ite_lucro_MN,0))) sale_cost,
           ISNULL(i.ite_produtosemgiro_BT,0) without_rotation,
@@ -217,6 +221,8 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
           AND i.ped_pedido_IN=p.ped_pedido_IN AND i.ped_serie_CH=p.ped_serie_CH
         INNER JOIN configuracaoentradasaida_T operation ON operation.ces_codigo_IN=p.ped_configuracaoentradasaida_IN
         LEFT JOIN clientejuridica customer ON customer.cli_codigo=p.cli_cliente_IN
+        LEFT JOIN cliente customer_name ON customer_name.cli_codigo=p.cli_cliente_IN
+        LEFT JOIN vendedor seller ON seller.ven_codigo=p.ven_vendedor_SI
         OUTER APPLY (
           SELECT MAX(item_invoice.ite_customediobrutoporitem_MN) cost_unit,
             CONVERT(bit,CASE WHEN COUNT(*)>0 THEN 1 ELSE 0 END) invoice_linked,
@@ -246,7 +252,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
             SELECT 1 FROM empresa_T group_company WHERE group_company.emp_CNPJ_CH=customer.cli_cnpj
           )
       )
-      SELECT company_code,
+      SELECT company_code, order_number, order_series, created_on, customer_code, customer_name, seller_name,
         COUNT_BIG(DISTINCT CONCAT(company_code,'|',order_number,'|',order_series)) order_count,
         SUM(sale_value) sales_value,
         SUM(sale_cost) sales_cost,
@@ -260,8 +266,35 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         ,SUM(CONVERT(decimal(18,2),CASE WHEN active_quantity>billed_quantity THEN (active_quantity-billed_quantity)*unit_price ELSE 0 END)) pending_value
         ,COUNT(DISTINCT CASE WHEN active_quantity>billed_quantity THEN CONCAT(company_code,'|',order_number,'|',order_series) END) pending_orders
       FROM commercial_lines
-      GROUP BY company_code
+      GROUP BY company_code, order_number, order_series, created_on, customer_code, customer_name, seller_name
 
+      SELECT DISTINCT p.emp_empresa_IN company_code,p.ped_pedido_IN order_number,p.ped_serie_CH order_series,
+        n.not_numero_IN number,n.not_serie_VC series,n.not_chavenotafiscaleletronica_VC access_key,
+        CONVERT(varchar(10),n.not_dataemissao_DT,23) issued_on
+      FROM pedido_T p
+      JOIN itensnotafiscalsaida_T_itenspedidovenda_T l ON l.inp_empresapedido_IN=p.emp_empresa_IN AND l.inp_pedido_IN=p.ped_pedido_IN AND l.inp_seriepedido_CH=p.ped_serie_CH
+      JOIN notafiscalsaida_T n ON n.emp_empresa_IN=l.inp_empresanotafiscal_IN AND n.not_numero_IN=l.inp_notafiscalsaida_IN
+      WHERE p.ped_datainclusao_DT>=@startDate AND p.ped_datainclusao_DT<@endExclusive
+        AND n.emp_empresa_IN=p.emp_empresa_IN AND n.not_dataemissao_DT<@endExclusive AND ISNULL(n.not_cancelada_BT,0)=0
+        AND ISNULL(n.not_denegada_BT,0)=0 AND ISNULL(n.not_complementar_BT,0)=0
+
+
+      SELECT p.emp_empresa_IN company_code,p.ped_pedido_IN order_number,p.ped_serie_CH order_series,
+        i.ite_sequencia_IN sequence,i.pro_produto_IN code,product.pro_descricao name,i.ite_unidade_CH unit,
+        ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0) quantity,
+        ISNULL(i.ite_preco_MN,0) unit_price,
+        CONVERT(decimal(18,2),(ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0))*ISNULL(i.ite_preco_MN,0)) value
+      FROM pedido_T p JOIN itenspedido_T i ON i.emp_empresa_IN=p.emp_empresa_IN AND i.ped_pedido_IN=p.ped_pedido_IN AND i.ped_serie_CH=p.ped_serie_CH
+      LEFT JOIN produto product ON product.pro_codigo=i.pro_produto_IN
+      WHERE p.emp_empresa_IN IN (1,3,5,6) AND p.ped_datainclusao_DT>=@startDate AND p.ped_datainclusao_DT<@endExclusive
+        AND ISNULL(p.ped_excluido_BT,0)=0 AND ISNULL(i.ite_cancelado_BT,0)=0
+      ORDER BY p.emp_empresa_IN,p.ped_pedido_IN,p.ped_serie_CH,i.ite_sequencia_IN
+      SELECT p.emp_empresa_IN company_code,p.ped_pedido_IN order_number,p.ped_serie_CH order_series,
+        company.emp_razao_VC company_name,company.emp_CNPJ_CH company_cnpj,
+        customer.cli_cnpj customer_cnpj,p.ped_descricaocondicaopagamento_VC payment_terms
+      FROM pedido_T p JOIN empresa_T company ON company.emp_empresa_IN=p.emp_empresa_IN
+      LEFT JOIN clientejuridica customer ON customer.cli_codigo=p.cli_cliente_IN
+      WHERE p.emp_empresa_IN IN (1,3,5,6) AND p.ped_datainclusao_DT>=@startDate AND p.ped_datainclusao_DT<@endExclusive
     `);
     const profitabilityRequest = pool.request();
     profitabilityRequest.input('empresa_VC', sql.VarChar(sql.MAX), companyCodes.join(','));
@@ -313,7 +346,28 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         incomingFreightRequest.execute('dbo.usp_SelecionarNotaFiscalEntradaFretePorFiltros')
       ]);
     const invoiceRows = result.recordsets[0] || [];
-    const commercialRows = result.recordsets[1] || [];
+    const orderRows = result.recordsets[1] || [];
+    const byCompany = new Map();
+    for (const row of orderRows) {
+      const aggregate = byCompany.get(row.company_code) || { company_code: row.company_code };
+      for (const key of [
+        'order_count',
+        'sales_value',
+        'sales_cost',
+        'sales_with_rotation',
+        'sales_without_rotation',
+        'billed_value',
+        'billed_cost_coverage',
+        'billed_cost',
+        'billed_with_rotation',
+        'billed_without_rotation',
+        'pending_value',
+        'pending_orders'
+      ])
+        aggregate[key] = (aggregate[key] || 0) + Number(row[key] || 0);
+      byCompany.set(row.company_code, aggregate);
+    }
+    const commercialRows = [...byCompany.values()];
     const profitabilityInvoices = profitabilityResult.recordsets?.[1] || [];
     const sellerProfitabilityInvoices = sellerProfitabilityResult.recordsets?.[1] || [];
     const profitabilityByCompany = new Map();
@@ -372,6 +426,60 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       checkedAt: new Date().toISOString(),
       startDate,
       endDate,
+      orders: orderRows.map((row) => ({
+        id: orderId(row.company_code, row.order_number, row.order_series),
+        companyCode: Number(row.company_code),
+        number: Number(row.order_number),
+        series: String(row.order_series).trim(),
+        ...(() => {
+          const h =
+            (result.recordsets[4] || []).find(
+              (h) =>
+                orderId(h.company_code, h.order_number, h.order_series) ===
+                orderId(row.company_code, row.order_number, row.order_series)
+            ) || {};
+          return {
+            companyName: String(h.company_name || '').trim(),
+            companyCnpj: String(h.company_cnpj || '').trim(),
+            customerCnpj: String(h.customer_cnpj || '').trim(),
+            paymentTerms: String(h.payment_terms || '').trim()
+          };
+        })(),
+        date: row.created_on,
+        customerCode: Number(row.customer_code),
+        customer: String(row.customer_name || '').trim(),
+        seller: String(row.seller_name || '').trim(),
+        total: Number(row.sales_value || 0),
+        billed: Number(row.billed_value || 0),
+        pending: Number(row.pending_value || 0),
+        invoices: (result.recordsets[2] || [])
+          .filter(
+            (n) =>
+              orderId(n.company_code, n.order_number, n.order_series) ===
+              orderId(row.company_code, row.order_number, row.order_series)
+          )
+          .map((n) => ({
+            number: n.number,
+            series: n.series,
+            key: String(n.access_key || '').trim(),
+            date: n.issued_on
+          })),
+        items: (result.recordsets[3] || [])
+          .filter(
+            (i) =>
+              orderId(i.company_code, i.order_number, i.order_series) ===
+              orderId(row.company_code, row.order_number, row.order_series)
+          )
+          .map((i) => ({
+            sequence: Number(i.sequence),
+            code: Number(i.code),
+            name: String(i.name || '').trim(),
+            unit: String(i.unit || '').trim(),
+            quantity: Number(i.quantity),
+            unitPrice: Number(i.unit_price),
+            value: Number(i.value)
+          }))
+      })),
       companies: invoiceRows.map((row) => ({
         companyCode: Number(row.company_code),
         count: Number(row.invoice_count),

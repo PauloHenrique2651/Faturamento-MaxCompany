@@ -1,4 +1,5 @@
 import { historicalPage, historicalReportPeriod } from './reconciliation-plan.js';
+import { publishOrderCatalogs } from './order-files.js';
 import { monthlyReportPeriods } from '../public/lib/maserp-periods.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -937,7 +938,14 @@ export async function syncSupabaseFromFalco() {
       Object.entries(state.completedDocuments || {}).slice(-50000)
     );
     await saveState(state);
+    const orderPublication = await publishOrderCatalogs(
+      Object.values(state.maserpReports),
+      state,
+      uploadObject
+    );
+    await saveState(state);
     const details = {
+      orderPublication,
       start,
       end,
       userCount,

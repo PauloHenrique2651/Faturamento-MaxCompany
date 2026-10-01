@@ -34,3 +34,15 @@ export async function crmCloudRequest(path, options = {}) {
   if (!response.ok) throw new Error(`Banco do CRM: HTTP ${response.status}.`);
   return body ? JSON.parse(body) : null;
 }
+
+export async function crmOrderDownload(path) {
+  const { validOrderStoragePath } = await import('./order-route.js');
+  if (!validOrderStoragePath(path)) throw new Error('Catálogo de pedidos inválido.');
+  const saved = JSON.parse(await readFile(process.env.SUPABASE_CONFIG_PATH || localConfig, 'utf8'));
+  const base = (process.env.SUPABASE_URL || saved.url).replace(/\/$/, '');
+  const secret =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || saved.secretKey;
+  return fetch(`${base}/storage/v1/object/fiscal-documents/${path}`, {
+    headers: { apikey: secret, Authorization: `Bearer ${secret}` }
+  });
+}

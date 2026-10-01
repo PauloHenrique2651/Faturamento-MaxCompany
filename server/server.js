@@ -20,7 +20,8 @@ import {
   syncSupabaseFromFalco,
   readPublishedMaserpReports
 } from './supabase-sync.js';
-import { crmCloudRequest } from './crm-store.js';
+import { crmCloudRequest, crmOrderDownload } from './crm-store.js';
+import { ordersRoute } from './order-route.js';
 import { salesTargetsRoute } from './sales-targets.js';
 import { sellerCommissionsRoute } from './seller-commissions.js';
 import { equivalencesRoute } from './product-equivalences.js';
@@ -140,6 +141,21 @@ async function cached(key, loader) {
 }
 
 async function api(req, res, url, user) {
+  if (url.pathname === '/api/commercial/orders') {
+    const result = await ordersRoute({
+      url,
+      user,
+      reports: (await readPublishedMaserpReports()).maserpReports,
+      download: crmOrderDownload
+    });
+    if (result.content) {
+      res.statusCode = result.status;
+      Object.entries(result.headers).forEach(([name, value]) => res.setHeader(name, value));
+      res.end(result.content);
+      return;
+    }
+    return json(res, result.status, result.body);
+  }
   if (url.pathname === '/api/falco/busca') {
     const query = searchQuery(url.searchParams.get('q'));
     const offset = Math.floor(safeNumber(url.searchParams.get('offset'), 0, 100000, 0));

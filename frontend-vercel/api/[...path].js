@@ -12,6 +12,7 @@ import {
 import { salesTargetsRoute } from '../../server/sales-targets.js';
 import { sellerCommissionsRoute } from '../../server/seller-commissions.js';
 import { equivalencesRoute } from '../../server/product-equivalences.js';
+import { ordersRoute, validOrderStoragePath } from '../../server/order-route.js';
 
 const scrypt = promisify(scryptCallback);
 const companies = [
@@ -64,7 +65,10 @@ async function supabase(path, options = {}) {
 }
 
 async function downloadStorageObject(path) {
-  if (!/^\d+\/(?:outgoing|incoming)\/\d{44}\.(?:xml|pdf|html)$/.test(String(path || '')))
+  if (
+    !/^\d+\/(?:outgoing|incoming)\/\d{44}\.(?:xml|pdf|html)$/.test(String(path || '')) &&
+    !validOrderStoragePath(path)
+  )
     throw new Error('Caminho de documento fiscal inválido.');
   const base = env('SUPABASE_URL').replace(/\/$/, '');
   const key = env('SUPABASE_SERVICE_ROLE_KEY') || env('SUPABASE_SECRET_KEY');
@@ -674,7 +678,7 @@ async function handle(req, res) {
   const crmRoute = url.searchParams.get('crmRoute');
   const path =
     url.pathname === '/api/executive' &&
-    ['targets', 'equivalences', 'commissions'].includes(crmRoute)
+    ['targets', 'equivalences', 'commissions', 'orders'].includes(crmRoute)
       ? `/api/commercial/${crmRoute}`
       : url.pathname;
   if (path === '/api/auth/login' && req.method === 'POST') {
@@ -750,6 +754,22 @@ async function handle(req, res) {
     )
   )
     return json(res, 403, { error: 'Acesso restrito ao fiscal.' });
+  if (path === '/api/commercial/orders') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
+    const result = await ordersRoute({
+      url,
+      user,
+      reports: (await syncOverview()).maserpReports,
+      download: downloadStorageObject
+    });
+    if (result.content) {
+      res.statusCode = result.status;
+      Object.entries(result.headers).forEach(([name, value]) => res.setHeader(name, value));
+      res.end(result.content);
+      return;
+    }
+    return json(res, result.status, result.body);
+  }
   if (path === '/api/falco/busca') {
     const query = String(url.searchParams.get('q') || '').trim();
     if (query.length > 120 || (query.length > 0 && query.length < 3 && !/^\d+$/.test(query)))

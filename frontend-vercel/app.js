@@ -1,3 +1,4 @@
+import { renderOrdersPage } from './ui/orders.js';
 import { profitabilityComposition } from './lib/profitability.js';
 import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
 import { parseRate, projectedCommission } from './commission.js';
@@ -1628,8 +1629,8 @@ function maserpReportPanel(data) {
   <div class="data-pipelines"><div class="pipeline-state ${sync?.fresh ? 'ok' : 'warn'}"><span>SAÍDAS · FALCO/MASERP</span><strong>${sync?.fresh ? 'Atualização ativa' : 'Aguardando coletor'}</strong><small>Concluída em ${esc(updated)}</small></div><div class="pipeline-state ${sefazErrors ? 'warn' : 'ok'}"><span>ENTRADAS · SEFAZ</span><strong>${esc(sefazHeadline)}</strong><small>${esc(sefazDetail)}</small></div></div>
   ${profit}
 
-  <article class="panel commercial-overview-panel">${panelHead('Pedidos do período', `Criados de ${esc(report.startDate.split('-').reverse().join('/'))} a ${esc(report.endDate.split('-').reverse().join('/'))} · ${num(metrics.orders)} pedidos`)}<div class="commercial-order-total"><span>Total desses pedidos</span><strong>${money(metrics.sales)}</strong></div>
-    <div class="commercial-overview"><a class="commercial-card orders" href="${esc(href('faturamento'))}"><span>Pedidos a faturar</span><strong>${money(metrics.pending)}</strong><small>${num(metrics.pendingOrders)} pedidos com valor pendente</small></a><a class="commercial-card billed" href="${esc(href('faturamento'))}"><span>Já faturado desses pedidos</span><strong>${money(metrics.billed)}</strong><small>Parte faturada do total acima</small></a></div>
+  <article class="panel commercial-overview-panel">${panelHead('Pedidos do período', `Criados de ${esc(report.startDate.split('-').reverse().join('/'))} a ${esc(report.endDate.split('-').reverse().join('/'))} · ${num(metrics.orders)} pedidos`)}<div class="commercial-order-total"><span>Total desses pedidos</span><strong>${money(metrics.sales)}</strong>${link('pedidos', 'Ver pedidos', { statusPedido: null }, 'text-button')}</div>
+    <div class="commercial-overview"><a class="commercial-card orders" href="${esc(href('pedidos', { statusPedido: 'pendente' }))}"><span>Pedidos a faturar</span><strong>${money(metrics.pending)}</strong><small>${num(metrics.pendingOrders)} pedidos com valor pendente</small></a><a class="commercial-card billed" href="${esc(href('pedidos', { statusPedido: 'faturado' }))}"><span>Já faturado desses pedidos</span><strong>${money(metrics.billed)}</strong><small>Parte faturada do total acima</small></a></div>
     <details class="company-reconciliation" ${state.companyReconciliationOpen ? 'open' : ''}><summary>Ver valores dos pedidos por empresa</summary><p>Vendas faturadas no alto também podem incluir pedidos criados antes deste período.</p><div>${invoiceRows
       .map((row) => {
         const commercial =
@@ -1709,7 +1710,11 @@ function nfeDashboard() {
     node.replaceWith(anchor);
   });
 }
+function ordersPage() {
+  renderOrdersPage({ data: state.orderData, state, page: $('#page'), header: head });
+}
 const snapshotRenderers = {
+  pedidos: ordersPage,
   dashboard: nfeDashboard,
   mostrador: paintMostrador,
   emitidas: outgoingDocuments,
@@ -1735,6 +1740,7 @@ function viewSnapshotScope() {
 function rememberView(scope) {
   if (!snapshotRenderers[state.view]) return;
   viewSnapshots.set(scope, {
+    orderData: state.orderData,
     nfeData: state.nfeData,
     incomingData: state.incomingData,
     targets: state.targets
@@ -1783,6 +1789,22 @@ async function load(background = false) {
     $('#page').innerHTML =
       `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Carregando notas…'}</div>`;
   try {
+    if (state.view === 'pedidos') {
+      const data = await fetchJson(`/api/commercial/orders?${state.params}`);
+      if (seq !== state.seq) return;
+      state.orderData = data;
+      rememberView(snapshotScope);
+      showXmlCompanies();
+      ordersPage();
+      $('#sync-status').textContent =
+        'Pedidos revisados em ' + new Date(data.checkedAt).toLocaleString('pt-BR');
+      $('#connection-indicator').setAttribute('aria-label', 'Consulta dos pedidos concluída');
+      $('#data-source-status').textContent = 'Pedidos do MASERP · atualização automática';
+      $('#refresh-cadence').textContent = 'Tela verifica os pedidos a cada 10 s';
+      $('#notice').innerHTML = '';
+      $('#context').innerHTML = '';
+      return;
+    }
     if (['mostrador', 'metas'].includes(state.view)) {
       const period = selectedDisplayPeriod(
         state.params.get('period') || 'month',
@@ -1990,6 +2012,7 @@ async function load(background = false) {
       !restored &&
       snapshot &&
       sameScope &&
+      state.view !== 'pedidos' &&
       !legacyViews.has(state.view) &&
       state.view !== 'dashboard'
     ) {
