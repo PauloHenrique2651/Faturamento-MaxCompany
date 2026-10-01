@@ -1412,7 +1412,7 @@ body[data-view='fiscal'] .company-filter {
   color: #8292a1;
   font-size: 14px;
 }
-body[data-view='busca'] .filters {
+body[data-view='busca'] .role-select {
   display: none;
 }
 .search-count {
@@ -1877,7 +1877,6 @@ body[data-view='devolucoes'] .company-filter {
   flex-basis: 100%;
   max-width: none;
 }
-body[data-view='busca'] .mobile-filter-trigger,
 body[data-view='relatorios'] .mobile-filter-trigger,
 body[data-view='usuarios'] .mobile-filter-trigger {
   display: none !important;
@@ -2003,5 +2002,232 @@ body[data-view='usuarios'] .mobile-filter-trigger {
   }
   .top-actions #logout {
     padding-inline: 7px;
+  }
+}
+
+/* Shared analysis controls retain the CRM identity on every operational screen. */
+.filters {
+  flex-wrap: wrap;
+}
+.filters [hidden] {
+  display: none !important;
+}
+.filters .company-filter {
+  flex-basis: 100%;
+  max-width: none;
+}
+.filter-basis {
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
+}
+.finance-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 24px 0 14px;
+}
+.finance-tabs .button {
+  min-height: 44px;
+  min-width: 160px;
+}
+.finance-dashboard-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.finance-dashboard-head h2 {
+  margin: 0 0 6px;
+}
+.finance-dashboard-head p,
+.finance-live {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+.finance-live {
+  white-space: nowrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+.finance-chart-controls,
+.finance-chart-controls > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.finance-chart-controls {
+  justify-content: space-between;
+  margin: 18px 0;
+}
+.finance-chart-controls .button {
+  min-height: 44px;
+}
+.finance-chart-wrap {
+  width: 100%;
+  min-width: 0;
+}
+.finance-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 350px;
+  overflow: visible;
+}
+.finance-chart text {
+  fill: var(--muted);
+  font-size: 12px;
+  font-family: inherit;
+}
+.finance-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.finance-zero {
+  stroke: #8da6bd;
+  stroke-width: 1;
+}
+.finance-line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.finance-line.incoming,
+.finance-point.incoming {
+  stroke: var(--accent);
+}
+.finance-line.outgoing,
+.finance-point.outgoing {
+  stroke: #b37822;
+}
+.finance-line.balance,
+.finance-point.balance {
+  stroke: #0f8069;
+}
+.finance-point {
+  fill: white;
+  stroke-width: 2;
+}
+.finance-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.finance-chart g:focus-visible .finance-hit {
+  fill: #496b8910;
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+.finance-legend {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.finance-legend span {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.finance-legend i {
+  width: 20px;
+  border-top: 3px solid var(--accent);
+}
+.finance-legend .outgoing {
+  border-color: #b37822;
+  border-top-style: dashed;
+}
+.finance-legend .balance {
+  border-color: #0f8069;
+  border-top-style: dotted;
+}
+.finance-day-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px;
+  margin: 20px 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.finance-day-detail label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.finance-day-detail select {
+  min-height: 44px;
+}
+#flow-day-values {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+#flow-day-values span {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+#flow-day-values strong {
+  font-size: 16px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.finance-arrears {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.cash-flow-panel {
+  margin-bottom: 0;
+}
+@media (max-width: 700px) {
+  .finance-dashboard-head {
+    display: block;
+  }
+  .finance-live {
+    display: inline-block;
+    margin-top: 12px;
+  }
+  .finance-chart-controls > div {
+    width: 100%;
+  }
+  .finance-chart-controls .button {
+    flex: 1;
+    padding: 8px;
+    font-size: 12px;
+  }
+  .finance-chart {
+    min-height: 190px;
+  }
+  .finance-legend {
+    gap: 12px;
+  }
+  .finance-day-detail label,
+  .finance-day-detail select {
+    width: 100%;
+  }
+  #flow-day-values {
+    width: 100%;
+    gap: 14px;
+  }
+  .finance-tabs .button {
+    flex: 1;
+    min-width: 0;
+  }
+  .filter-basis {
+    width: 100%;
+  }
+  .filters input,
+  .filters select {
+    font-size: 16px;
+    min-height: 44px;
   }
 }

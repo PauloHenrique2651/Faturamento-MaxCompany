@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#07111c" />
-    <meta name="crm-build" content="2d3bd633e2b2c405" />
+    <meta name="crm-build" content="b98ff71cbaf50dd1" />
     <link rel="icon" type="image/webp" href="/brand/favicon.webp" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,9 +14,9 @@
       rel="stylesheet"
     />
     <title>CRM Executivo · Grupo MaxCompany</title>
-    <link rel="stylesheet" href="/styles.css?v=2d3bd633e2b2c405" />
-    <link rel="stylesheet" href="/brand.css?v=2d3bd633e2b2c405" />
-    <link rel="stylesheet" href="/mostrador.css?v=2d3bd633e2b2c405" />
+    <link rel="stylesheet" href="/styles.css?v=b98ff71cbaf50dd1" />
+    <link rel="stylesheet" href="/brand.css?v=b98ff71cbaf50dd1" />
+    <link rel="stylesheet" href="/mostrador.css?v=b98ff71cbaf50dd1" />
   </head>
   <body class="auth-pending">
     <section class="auth-screen" id="auth-screen" aria-label="Acesso ao CRM" hidden>
@@ -147,8 +147,11 @@
               <option value="90">Últimos 90 dias</option>
               <option value="month">Mês atual</option>
               <option value="prev-month">Mês anterior</option>
+              <option value="quarter">Trimestre atual</option>
               <option value="year">Ano atual</option>
               <option value="prev-year">Ano anterior</option>
+              <option value="next-30" data-finance-preset>Próximos 30 dias</option>
+              <option value="next-90" data-finance-preset>Próximos 90 dias</option>
               <option value="custom">Personalizado</option>
             </select></label
           ><label>De<input id="start" type="date" required /></label
@@ -176,6 +179,10 @@
               <option value="externo">Vendedor externo</option>
             </select></label
           >
+          <span id="filter-basis" class="filter-basis"></span>
+          <button type="button" id="clear-analysis-filters" class="button quiet">
+            Limpar filtros
+          </button>
         </section>
         <div id="context"></div>
         <div id="notice" role="status"></div>
@@ -231,7 +238,7 @@
       </div>
       <div id="detail-content" class="dialog-content"></div>
     </dialog>
-    <script src="/config.js?v=2d3bd633e2b2c405"></script>
-    <script type="module" src="/app.js?v=2d3bd633e2b2c405"></script>
+    <script src="/config.js?v=b98ff71cbaf50dd1"></script>
+    <script type="module" src="/app.js?v=b98ff71cbaf50dd1"></script>
   </body>
 </html>

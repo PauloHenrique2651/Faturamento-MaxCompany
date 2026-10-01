@@ -7,7 +7,7 @@ const day = (v) =>
     .split('-')
     .reverse()
     .join('/');
-export function renderWalletPage({ data, payables, state, page, header }) {
+export function renderWalletPage({ data, payables, state, page, header, embedded = false }) {
   const inicio = state.params.get('inicio'),
     fim = state.params.get('fim');
   const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(
@@ -38,7 +38,7 @@ export function renderWalletPage({ data, payables, state, page, header }) {
       'Carteira a receber',
       `Vencimentos de ${day(inicio)} a ${day(fim)}. Inclui notas emitidas em qualquer data; pedidos ainda não faturados não entram.`
     ) +
-    renderCashFlow({ wallet: data, payables, state, today }) +
+    (embedded ? '' : renderCashFlow({ wallet: data, payables, state, today })) +
     `<section class="panel wallet-panel"><div class="tabs"><a class="button" href="${esc(walletLink(today, next30))}">Próximos 30 dias</a></div><div class="toolbar"><label class="search-field"><span>Buscar nota ou cliente</span><input id="wallet-search" type="search" placeholder="Nota, cliente ou condição de pagamento" value="${esc(state.walletQuery || '')}"></label><label>Situação<select id="wallet-status"><option value="">Todas as parcelas</option><option value="forecast" ${state.walletStatus === 'forecast' ? 'selected' : ''}>A vencer</option><option value="overdue" ${state.walletStatus === 'overdue' ? 'selected' : ''}>Vencidas</option><option value="anticipated" ${state.walletStatus === 'anticipated' ? 'selected' : ''}>Antecipadas / descontadas</option></select></label><label>Ordenar<select id="wallet-sort"><option value="date">Vencimento</option><option value="value" ${state.walletSort === 'value' ? 'selected' : ''}>Maior valor</option><option value="customer" ${state.walletSort === 'customer' ? 'selected' : ''}>Cliente</option></select></label><button class="button" id="wallet-clear">Limpar filtros da lista</button></div><div id="wallet-summary" class="order-totals" aria-live="polite"></div><div id="wallet-calendar"></div><h2>Notas e parcelas a receber</h2><div id="wallet-list"></div><p class="note">Previsão pelas parcelas em aberto do MASERP. Valores pagos, baixados, excluídos ou de notas canceladas ficam fora. Abatimentos já reduzem o valor; vencimentos reprogramados prevalecem. Antecipados/descontados ficam separados. A data prevista não garante o pagamento nem representa saldo bancário ou capital líquido disponível. Revisado em ${esc(new Date(data.checkedAt).toLocaleString('pt-BR'))}.</p><div id="wallet-missing"></div></section>`;
   let first = true;
   const paint = () => {
@@ -109,7 +109,7 @@ export function renderWalletPage({ data, payables, state, page, header }) {
     state.walletStatus = '';
     state.walletSort = 'date';
     state.walletLimit = 60;
-    renderWalletPage({ data, payables, state, page, header });
+    renderWalletPage({ data, payables, state, page, header, embedded });
   };
   page.querySelector('#wallet-search').oninput = (e) => {
     state.walletQuery = e.target.value;
@@ -117,6 +117,7 @@ export function renderWalletPage({ data, payables, state, page, header }) {
     paint();
   };
   paint();
+  page.querySelector('#wallet-calendar').hidden = embedded;
   if (focus) {
     const input = page.querySelector('#wallet-search');
     input.focus({ preventScroll: true });

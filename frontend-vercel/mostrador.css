@@ -1000,9 +1000,7 @@ body[data-view='mostrador'] #page {
 .display-footer button span {
   margin-left: 5px;
 }
-body[data-view='metas'] .filters,
-body[data-view='metas'] #context,
-body[data-view='metas'] .mobile-filter-trigger {
+body[data-view='metas'] #context {
   display: none !important;
 }
 .targets-layout {
@@ -1475,5 +1473,68 @@ body[data-view='metas'] .mobile-filter-trigger {
   }
   .display-order-total {
     text-align: left;
+  }
+}
+
+.display-date-filters {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border: 1px solid var(--display-line);
+  border-radius: 18px;
+  background: var(--display-panel);
+}
+.display-date-filters label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--display-muted);
+}
+.display-date-filters input,
+.display-date-filters select {
+  color: #f5f9fc;
+  background: #0c2538;
+  border: 1px solid var(--display-line);
+  border-radius: 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+  font: inherit;
+  color-scheme: dark;
+}
+.display-date-filters select option {
+  background: #0c2538;
+}
+.display-date-filters input[name='cfop'] {
+  width: 110px;
+}
+.display-date-filters > span {
+  font-size: 12px;
+  color: var(--display-muted);
+  align-self: center;
+}
+#display-filter-error:empty {
+  display: none;
+}
+#display-filter-error {
+  width: 100%;
+  color: #ffd58a;
+}
+@media (max-width: 700px) {
+  .display-date-filters label {
+    width: calc(50% - 6px);
+    min-width: 0;
+  }
+  .display-date-filters input,
+  .display-date-filters select {
+    width: 100%;
+    font-size: 16px;
+  }
+  .display-date-filters label:first-child {
+    width: 100%;
+  }
+  .display-date-filters > span {
+    width: 100%;
   }
 }

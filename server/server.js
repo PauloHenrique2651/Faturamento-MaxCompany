@@ -14,6 +14,7 @@ import {
   searchIncomingDocuments,
   readIncomingSyncStatus
 } from './sefaz-files.js';
+import { searchScope } from '../public/lib/filter-scope.js';
 import { searchQuery } from './nfe-search.js';
 import { renderDanfe } from './danfe.js';
 import {
@@ -210,7 +211,7 @@ async function api(req, res, url, user) {
     if (!sources.length) throw new Error('Fontes de NF-e indisponíveis');
     const rows = results
       .filter((result) => result.status === 'fulfilled')
-      .flatMap((result) => result.value)
+      .flatMap((result) => searchScope(result.value, url.searchParams))
       .sort((a, b) => b.date.localeCompare(a.date) || b.key.localeCompare(a.key));
     return json(res, 200, {
       query: query.raw,

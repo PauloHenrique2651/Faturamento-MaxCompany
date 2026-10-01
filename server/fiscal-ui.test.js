@@ -1,3 +1,4 @@
+import { scopeNavigation } from '../public/lib/filter-scope.js';
 import { renderMostrador } from '../public/mostrador.js';
 import {
   registeredSalesReturns,
@@ -88,6 +89,7 @@ export function renderFiscalViews(
   };
   const context = vm.createContext({
     ...analysis,
+    scopeNavigation,
     selectMaserpReport,
     commercialBilled,
     profitabilityComposition,

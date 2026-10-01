@@ -1,3 +1,4 @@
+import { searchScope } from '../../public/lib/filter-scope.js';
 import { summarySynchronization } from '../../public/lib/maserp-periods.js';
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -816,7 +817,11 @@ async function handle(req, res) {
     const rows = await allCloudRows(
       '/rest/v1/fiscal_documents?select=*&order=issued_on.desc,company_id,access_key'
     );
-    return json(res, 200, searchDocuments(rows.map(documentFromCloud), query, offset));
+    return json(
+      res,
+      200,
+      searchDocuments(searchScope(rows.map(documentFromCloud), url.searchParams), query, offset)
+    );
   }
   if (path === '/api/falco/nfe' || path === '/api/executive') {
     const cloud = await cloudDocuments('outgoing', url);

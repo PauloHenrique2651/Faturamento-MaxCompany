@@ -1,5 +1,11 @@
-import { renderWalletPage } from './ui/wallet.js';
-import { renderPayablesPage } from './ui/payables.js';
+import { renderFinancePage } from './ui/finance.js';
+import {
+  filterBasis,
+  fiscalFilterViews,
+  validPeriod,
+  scopeNavigation,
+  targetsInScope
+} from './lib/filter-scope.js';
 import { renderOrdersPage } from './ui/orders.js';
 import { profitabilityComposition } from './lib/profitability.js';
 import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
@@ -66,7 +72,7 @@ window.addEventListener('pageshow', checkBuild);
 window.addEventListener('focus', checkBuild);
 checkBuild();
 function href(view, changes = {}) {
-  const p = new URLSearchParams(state.params);
+  const p = scopeNavigation(view, state.params);
   if (view !== 'busca') {
     p.delete('q');
     p.delete('offset');
@@ -80,10 +86,12 @@ function href(view, changes = {}) {
     if (v === null || v === '') p.delete(k);
     else p.set(k, String(v));
   }
-  return `#${view}?${p}`;
+  return `#${view === 'pagar' ? 'carteira' : view}?${p}`;
 }
 function searchUrl(query, offset = 0) {
   const params = new URLSearchParams();
+  for (const key of ['inicio', 'fim', 'empresa'])
+    if (state.params.get(key)) params.set(key, state.params.get(key));
   if (query) params.set('q', query);
   if (offset) params.set('offset', String(offset));
   return `#busca?${params}`;
@@ -1161,7 +1169,7 @@ function searchDashboard(data = null) {
   $('#page').innerHTML =
     head(
       'Busca global',
-      'Encontre documentos e relações em todas as pastas consultadas, sem limite do período do dashboard.',
+      'Notas emitidas ou recebidas no período e empresa selecionados. Ajuste os filtros para consultar outro intervalo.',
       'MaxCompany / Busca'
     ) +
     (data
@@ -1244,9 +1252,40 @@ function paintMostrador() {
     paused: state.mostradorPaused,
     sort: state.mostradorSort
   });
-  if (result.signature !== state.mostradorSignature) {
+  if (
+    result.signature !== state.mostradorSignature &&
+    !document.activeElement?.closest('#display-filter-form')
+  ) {
     $('#page').innerHTML = result.html;
     state.mostradorSignature = result.signature;
+    const form = $('#display-filter-form');
+    if (form) {
+      form.onchange = (event) => {
+        const fields = form.elements;
+        if (fields.preset.value !== 'custom' && event?.target === fields.preset) {
+          const d = presetDates(fields.preset.value, today());
+          if (d) {
+            fields.inicio.value = d[0];
+            fields.fim.value = d[1];
+          }
+        }
+        if (!form.reportValidity() || !validPeriod(fields.inicio.value, fields.fim.value)) {
+          $('#display-filter-error').textContent = 'Selecione um período válido de 1 a 366 dias.';
+          return;
+        }
+        go('mostrador', {
+          inicio: fields.inicio.value,
+          fim: fields.fim.value,
+          period: matchingPreset(fields.inicio.value, fields.fim.value, today()),
+          efeito: fields.efeito.value || null,
+          cfop: fields.cfop.value || null
+        });
+      };
+      form.onsubmit = (e) => {
+        e.preventDefault();
+        form.onchange();
+      };
+    }
   }
   const clock = $('#display-clock');
   if (clock)
@@ -1260,13 +1299,14 @@ function metasPage() {
   const kindLabel = { month: 'Mensal', quarter: 'Trimestral', year: 'Anual' };
   const scopeLabel = { group: 'Grupo', company: 'Empresa', seller: 'Vendedor' };
   const sellers = state.nfeData?.sellers || [];
+  const targets = targetsInScope(state.targets, state.params);
   $('#page').innerHTML =
     head(
       'Metas comerciais',
       'Metas gravadas no banco do CRM. O Falco continua somente consulta.',
       'MaxCompany / Gestão'
     ) +
-    `<section class="targets-layout"><form id="target-form" class="panel targets-form"><h2>Definir meta</h2><p>Metas mensais prevalecem sobre trimestrais e anuais no mesmo período. A distribuição diária considera segunda a sexta-feira, sem feriados.</p><label>Escopo<select name="scopeType" id="target-scope"><option value="group">Grupo MaxCompany</option><option value="company">Empresa</option><option value="seller">Vendedor</option></select></label><label class="target-entity" id="target-company-field" hidden>Empresa<select name="companyKey"><option value="1">MaxPlast</option><option value="2">MaxSafety</option><option value="3">MaxSupply</option><option value="4">MaxSupply · Filial ES</option></select></label><label class="target-entity" id="target-seller-field" hidden>Vendedor<input name="sellerName" list="target-sellers" placeholder="Nome na nota da NF-e"><datalist id="target-sellers">${sellers.map((row) => `<option value="${esc(row.name)}"></option>`).join('')}</datalist></label><label>Periodicidade<select name="periodKind" id="target-kind"><option value="month">Mensal</option><option value="quarter">Trimestral</option><option value="year">Anual</option></select></label><label>Início<input name="periodStart" id="target-period" type="date" value="${today().slice(0, 7)}-01" required></label><label>Valor da meta (R$)<input name="amount" type="number" min="0" max="999999999999" step="0.01" required></label><p id="target-error" role="alert"></p><button class="button primary" type="submit">Salvar meta</button></form><section class="panel targets-list"><h2>Metas cadastradas</h2><p>Alterações feitas aqui aparecem para toda a equipe autorizada.</p>${state.targets.length ? `<div class="targets-table-wrap"><table><thead><tr><th>Escopo</th><th>Nome</th><th>Período</th><th>Meta</th><th></th></tr></thead><tbody>${state.targets.map((row) => `<tr><td>${scopeLabel[row.scope_type] || ''}</td><td>${esc(row.scope_name)}</td><td>${kindLabel[row.period_kind] || ''} · ${esc(row.period_start)}</td><td>${money(row.amount)}</td><td><button type="button" data-target-delete="${esc(row.id)}" aria-label="Excluir meta de ${esc(row.scope_name)}">Excluir</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><h3>Nenhuma meta cadastrada</h3><p>Cadastre a primeira meta para comparar realizado e projeção.</p></div>'}</section></section>`;
+    `<section class="targets-layout"><form id="target-form" class="panel targets-form"><h2>Definir meta</h2><p>Metas mensais prevalecem sobre trimestrais e anuais no mesmo período. A distribuição diária considera segunda a sexta-feira, sem feriados.</p><label>Escopo<select name="scopeType" id="target-scope"><option value="group">Grupo MaxCompany</option><option value="company">Empresa</option><option value="seller">Vendedor</option></select></label><label class="target-entity" id="target-company-field" hidden>Empresa<select name="companyKey"><option value="1">MaxPlast</option><option value="2">MaxSafety</option><option value="3">MaxSupply</option><option value="4">MaxSupply · Filial ES</option></select></label><label class="target-entity" id="target-seller-field" hidden>Vendedor<input name="sellerName" list="target-sellers" placeholder="Nome na nota da NF-e"><datalist id="target-sellers">${sellers.map((row) => `<option value="${esc(row.name)}"></option>`).join('')}</datalist></label><label>Periodicidade<select name="periodKind" id="target-kind"><option value="month">Mensal</option><option value="quarter">Trimestral</option><option value="year">Anual</option></select></label><label>Início<input name="periodStart" id="target-period" type="date" value="${today().slice(0, 7)}-01" required></label><label>Valor da meta (R$)<input name="amount" type="number" min="0" max="999999999999" step="0.01" required></label><p id="target-error" role="alert"></p><button class="button primary" type="submit">Salvar meta</button></form><section class="panel targets-list"><h2>Metas cadastradas</h2><p>Alterações feitas aqui aparecem para toda a equipe autorizada.</p>${targets.length ? `<div class="targets-table-wrap"><table><thead><tr><th>Escopo</th><th>Nome</th><th>Período</th><th>Meta</th><th></th></tr></thead><tbody>${targets.map((row) => `<tr><td>${scopeLabel[row.scope_type] || ''}</td><td>${esc(row.scope_name)}</td><td>${kindLabel[row.period_kind] || ''} · ${esc(row.period_start)}</td><td>${money(row.amount)}</td><td><button type="button" data-target-delete="${esc(row.id)}" aria-label="Excluir meta de ${esc(row.scope_name)}">Excluir</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><h3>Nenhuma meta neste período</h3><p>Ajuste os filtros ou cadastre uma meta para este período.</p></div>'}</section></section>`;
   const sellerKey = (name) =>
     String(name || '')
       .normalize('NFD')
@@ -1716,8 +1756,8 @@ function ordersPage() {
   renderOrdersPage({ data: state.orderData, state, page: $('#page'), header: head });
 }
 function walletPage() {
-  renderWalletPage({
-    data: state.walletData,
+  renderFinancePage({
+    wallet: state.walletData,
     payables: state.payablesData,
     state,
     page: $('#page'),
@@ -1725,14 +1765,9 @@ function walletPage() {
   });
 }
 function payablesPage() {
-  renderPayablesPage({
-    data: state.payablesData,
-    wallet: state.walletData,
-    state,
-    page: $('#page'),
-    header: head
-  });
+  walletPage();
 }
+
 const snapshotRenderers = {
   pagar: payablesPage,
   carteira: walletPage,
@@ -1869,13 +1904,13 @@ async function load(background = false) {
         params.set('inicio', period.start);
         params.set('fim', period.end);
       }
-      const year = period.start.slice(0, 4);
+
       const [outgoing, incoming, targets, commissionRules] = await Promise.all([
         fetchJson(`/api/falco/nfe?${params}`),
         state.view === 'mostrador'
           ? fetchJson(`/api/falco/entradas?${params}`)
           : Promise.resolve(null),
-        fetchJson(`/api/commercial/targets?start=${year}-01-01&end=${year}-12-31`),
+        fetchJson(`/api/commercial/targets?start=${params.get('inicio')}&end=${params.get('fim')}`),
         state.view === 'metas' ? fetchJson('/api/commercial/commissions') : Promise.resolve([])
       ]);
       if (seq !== state.seq) return;
@@ -1904,7 +1939,7 @@ async function load(background = false) {
       else {
         const offset = Number(state.params.get('offset') || 0);
         const data = await fetchJson(
-          `/api/falco/busca?q=${encodeURIComponent(query)}&offset=${Math.max(0, offset)}`
+          `/api/falco/busca?${new URLSearchParams({ q: query, offset: String(Math.max(0, offset)), inicio: state.params.get('inicio'), fim: state.params.get('fim'), empresa: state.params.get('empresa') || '' })}`
         );
         if (seq !== state.seq) return;
         searchDashboard(data);
@@ -2208,7 +2243,14 @@ async function loadLegacy(seq) {
 function route() {
   if (!state.user) return;
   clearTimeout(searchTimer);
-  const [view, query = ''] = location.hash.slice(1).split('?');
+  let [view, query = ''] = location.hash.slice(1).split('?');
+  if (view === 'pagar') {
+    view = 'carteira';
+    const p = new URLSearchParams(query);
+    p.set('aba', 'pagar');
+    query = p.toString();
+    history.replaceState(null, '', '#carteira?' + query);
+  }
   if (view === 'relatorios') {
     location.hash = state.user.role === 'fiscal' ? '#emitidas' : '#dashboard';
     return;
@@ -2219,20 +2261,32 @@ function route() {
   }
   state.view = views[view] ? view : 'dashboard';
   document.body.dataset.view = state.view;
-  state.params = new URLSearchParams(query);
+  state.params = scopeNavigation(state.view, query);
+  $('#filter-basis').textContent = filterBasis(state.view);
+  for (const option of document.querySelectorAll('[data-finance-preset]'))
+    option.hidden = state.view !== 'carteira';
+  for (const id of ['#financial-effect', '#cfop-filter'])
+    $(id).closest('label').hidden = !fiscalFilterViews.has(state.view);
   if (state.view === 'mostrador') {
     const period = displayPeriod(state.params.get('period') || 'month', today());
     state.mostradorLivePeriod =
-      !state.params.has('inicio') ||
-      !state.params.has('fim') ||
-      (state.params.get('inicio') === period.start && state.params.get('fim') === period.end);
+      ['today', 'week', 'month', 'quarter', 'year'].includes(
+        state.params.get('period') || 'month'
+      ) &&
+      (!state.params.has('inicio') ||
+        !state.params.has('fim') ||
+        (state.params.get('inicio') === period.start && state.params.get('fim') === period.end));
     if (!state.params.has('inicio') || !state.params.has('fim')) {
       state.params.set('inicio', period.start);
       state.params.set('fim', period.end);
     }
     state.mostradorSignature = '';
   }
-  if (!state.params.has('fim')) state.params.set('fim', today());
+  if (!state.params.has('fim'))
+    state.params.set(
+      'fim',
+      state.view === 'carteira' ? presetDates('next-30', today())[1] : today()
+    );
   if (!state.params.has('inicio'))
     state.params.set('inicio', `${state.params.get('fim').slice(0, 7)}-01`);
   state.q = '';
@@ -2687,7 +2741,7 @@ function applyPeriod() {
   const start = $('#start'),
     end = $('#end');
   if (!start.reportValidity() || !end.reportValidity()) return;
-  if (start.value > end.value || Date.parse(end.value) - Date.parse(start.value) > 365 * 86400000) {
+  if (!validPeriod(start.value, end.value)) {
     $('#notice').innerHTML =
       '<div class="notice">Selecione um período válido de 1 a 366 dias.</div>';
     return;
@@ -2698,10 +2752,18 @@ function applyPeriod() {
     fim: end.value,
     empresa: $('#company').value,
     papel: document.querySelector('.role-select').offsetParent ? $('#role').value : null,
-    efeito: $('#financial-effect').value || null,
-    cfop: $('#cfop-filter').value || null
+    efeito: fiscalFilterViews.has(state.view) ? $('#financial-effect').value || null : null,
+    cfop: fiscalFilterViews.has(state.view) ? $('#cfop-filter').value || null : null,
+    offset: null,
+    period: state.view === 'mostrador' ? $('#preset').value : null
   });
 }
+$('#clear-analysis-filters').onclick = () => {
+  const p = new URLSearchParams({ inicio: today().slice(0, 7) + '-01', fim: today() });
+  if (state.view === 'carteira' && state.params.get('aba')) p.set('aba', state.params.get('aba'));
+  if (state.view === 'busca' && state.params.get('q')) p.set('q', state.params.get('q'));
+  location.hash = '#' + state.view + '?' + p;
+};
 $('#financial-effect').onchange = applyPeriod;
 $('#cfop-filter').onchange = () => {
   if ($('#cfop-filter').value && !/^\d{4}$/.test($('#cfop-filter').value)) {

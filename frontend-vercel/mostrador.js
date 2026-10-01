@@ -1,3 +1,4 @@
+import { matchingPreset } from './lib/analysis.js';
 import { profitabilityComposition } from './lib/profitability.js';
 import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
 import { commercialPerformance, selectedDisplayPeriod } from './lib/commercial-performance.js';
@@ -315,7 +316,40 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
       : '—';
   const html = `<div class="display-shell ${options.paused ? 'is-paused' : ''}">
     <header class="display-header"><div class="display-identity"><img src="${company.logo}" alt=""/><div><span>GRUPO MAXCOMPANY</span><strong>Performance comercial</strong><small>${esc(company.name)} · ${esc(period.label)}</small></div></div><div class="display-status ${fresh ? 'fresh' : 'stale'}"><span class="display-status-dot"></span><div><strong>${status}</strong><small>Última sincronização ${esc(stamp(checked))}</small></div></div><div class="display-clock" id="display-clock"></div><div class="display-actions"><button type="button" data-display-fullscreen aria-label="Alternar tela cheia">Tela cheia</button><a href="${esc(link('dashboard', params))}">Voltar ao CRM</a></div></header>
-    <div class="display-controls"><div class="display-companies" role="group" aria-label="Empresa">${companies.map((row) => `<button type="button" data-display-company="${row.id}" class="${row.id === selectedCompany ? 'active' : ''}">${esc(row.name)}</button>`).join('')}</div><div class="display-periods" role="group" aria-label="Período">${periods.map(([id, label]) => `<button type="button" data-display-period="${id}" class="${id === periodKey ? 'active' : ''}">${label}</button>`).join('')}</div></div>
+    <div class="display-controls"><div class="display-companies" role="group" aria-label="Empresa">${companies.map((row) => `<button type="button" data-display-company="${row.id}" class="${row.id === selectedCompany ? 'active' : ''}">${esc(row.name)}</button>`).join('')}</div><div class="display-periods" role="group" aria-label="Período">${periods.map(([id, label]) => `<button type="button" data-display-period="${id}" class="${id === matchingPreset(period.start, period.end, today) ? 'active' : ''}">${label}</button>`).join('')}</div></div>
+    <form id="display-filter-form" class="display-date-filters" aria-label="Filtros de análise"><label>Período<select name="preset" aria-label="Período do mostrador">${[
+      ['today', 'Hoje'],
+      ['yesterday', 'Ontem'],
+      ['week', 'Semana atual'],
+      ['prev-week', 'Semana anterior'],
+      ['7', 'Últimos 7 dias'],
+      ['30', 'Últimos 30 dias'],
+      ['90', 'Últimos 90 dias'],
+      ['month', 'Mês atual'],
+      ['prev-month', 'Mês anterior'],
+      ['quarter', 'Trimestre atual'],
+      ['year', 'Ano atual'],
+      ['prev-year', 'Ano anterior'],
+      ['custom', 'Personalizado']
+    ]
+      .map(
+        ([id, label]) =>
+          `<option value="${id}" ${matchingPreset(period.start, period.end, today) === id ? 'selected' : ''}>${label}</option>`
+      )
+      .join(
+        ''
+      )}</select></label><label>De<input name="inicio" type="date" value="${esc(period.start)}" required aria-label="De"/></label><label>Até<input name="fim" type="date" value="${esc(period.end)}" required aria-label="Até"/></label><label>Efeito financeiro<select name="efeito"><option value="">Todos</option>${[
+      ['financeiro', 'Com efeito'],
+      ['nao-financeiro', 'Sem efeito'],
+      ['pendente', 'Pendente']
+    ]
+      .map(
+        ([id, label]) =>
+          `<option value="${id}" ${params.get('efeito') === id ? 'selected' : ''}>${label}</option>`
+      )
+      .join(
+        ''
+      )}</select></label><label>CFOP<input name="cfop" aria-label="CFOP de quatro dígitos" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="Todos" value="${esc(params.get('cfop') || '')}"/></label><span>Período pela emissão da nota</span><p id="display-filter-error" role="status"></p></form>
     <section class="display-slide ${slide === 0 ? 'active' : ''}" data-slide="0">
       <article class="display-profit-card display-profit-priority"><span class="display-kicker">LUCRO DAS VENDAS</span>
         ${c ? `<strong>${money(c.profit)}</strong><div class="display-profit-rate"><span>Após custos e despesas</span><b>${profitMargin} de margem</b></div>${c.reconciled ? '' : `<p>Conciliação pendente: diferença ${money(c.difference)}</p>`}` : '<strong class="display-no-profit">Aguardando relatório do período</strong>'}

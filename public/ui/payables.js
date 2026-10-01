@@ -10,7 +10,7 @@ const day = (d) =>
       .reverse()
       .join('/') || 'Não informado'
   );
-export function renderPayablesPage({ data, wallet, state, page, header }) {
+export function renderPayablesPage({ data, wallet, state, page, header, embedded = false }) {
   const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(
     new Date()
   );
@@ -39,7 +39,7 @@ export function renderPayablesPage({ data, wallet, state, page, header }) {
       'Contas a pagar',
       'Parcelas em aberto do MASERP, pelo vencimento. Inclui documentos lançados em qualquer data.'
     ) +
-    renderCashFlow({ wallet, payables: data, state, today }) +
+    (embedded ? '' : renderCashFlow({ wallet, payables: data, state, today })) +
     `<section class="panel wallet-panel"><div class="tabs"><a class="button" href="${esc(upcoming)}">Próximos 30 dias</a></div><div class="toolbar"><label class="search-field"><span>Buscar documento ou fornecedor</span><input id="payable-search" type="search" value="${esc(state.payableQuery || '')}" placeholder="Nota, documento, fornecedor ou título"></label><label>Origem<select id="payable-origin"><option value="">Todas as origens</option><option value="invoice" ${state.payableOrigin === 'invoice' ? 'selected' : ''}>Notas de entrada</option><option value="unlinked" ${state.payableOrigin === 'unlinked' ? 'selected' : ''}>Sem nota vinculada</option></select></label><label>Situação<select id="payable-status"><option value="">Todas as parcelas</option><option value="forecast" ${state.payableStatus === 'forecast' ? 'selected' : ''}>A vencer</option><option value="overdue" ${state.payableStatus === 'overdue' ? 'selected' : ''}>Vencidas</option><option value="blocked" ${state.payableStatus === 'blocked' ? 'selected' : ''}>Bloqueadas</option></select></label><label>Ordenar<select id="payable-sort"><option value="date">Vencimento</option><option value="value" ${state.payableSort === 'value' ? 'selected' : ''}>Maior valor</option><option value="supplier" ${state.payableSort === 'supplier' ? 'selected' : ''}>Fornecedor</option></select></label><button class="button" id="payable-clear">Limpar filtros da lista</button></div><div id="payable-summary" class="order-totals" aria-live="polite"></div><h2>Documentos e parcelas a pagar</h2><div id="payable-list"></div><div class="pagination" id="payable-pagination"></div><p class="note">Valor da parcela menos desconto, mais juros e mora cadastrados no MASERP. Pagos, baixados, excluídos, encerrados por renegociação e previsões provisórias ficam fora. Bloqueados permanecem identificados e incluídos nas obrigações; não representam pagamento autorizado. Compras e lucro não são alterados por esta previsão. Revisado em ${esc(new Date(data.checkedAt).toLocaleString('pt-BR'))}.</p></section>`;
   let first = true;
   const paint = () => {
@@ -102,7 +102,7 @@ export function renderPayablesPage({ data, wallet, state, page, header }) {
     state.payableOrigin = '';
     state.payableSort = 'date';
     state.payableLimit = 60;
-    renderPayablesPage({ data, wallet, state, page, header });
+    renderPayablesPage({ data, wallet, state, page, header, embedded });
   };
   paint();
   if (focus) {

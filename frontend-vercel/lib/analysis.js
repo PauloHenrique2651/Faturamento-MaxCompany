@@ -16,10 +16,16 @@ export function presetDates(preset, today) {
   const previousYear = String(Number(currentYear) - 1);
   const dates = {
     today: [today, today],
+    'next-30': [today, moveDay(today, 29)],
+    'next-90': [today, moveDay(today, 89)],
     yesterday: [moveDay(today, -1), moveDay(today, -1)],
     week: [monday, today],
     'prev-week': [moveDay(monday, -7), moveDay(monday, -1)],
     month: [currentMonth, today],
+    quarter: [
+      `${currentYear}-${String(Math.floor((Number(today.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, '0')}-01`,
+      today
+    ],
     'prev-month': [`${previousMonthEnd.slice(0, 7)}-01`, previousMonthEnd],
     year: [`${currentYear}-01-01`, today],
     'prev-year': [`${previousYear}-01-01`, `${previousYear}-12-31`],
@@ -33,11 +39,14 @@ export function presetDates(preset, today) {
 export function matchingPreset(start, end, today) {
   for (const key of [
     'today',
+    'next-30',
+    'next-90',
     'yesterday',
     'week',
     'prev-week',
     'month',
     'prev-month',
+    'quarter',
     'year',
     'prev-year',
     '7',
