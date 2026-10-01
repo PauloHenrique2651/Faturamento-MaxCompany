@@ -3,7 +3,14 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/api/commercial/targets", "destination": "/api/executive?crmRoute=targets" },
+    {
+      "source": "/api/commercial/orders",
+      "destination": "/api/executive?crmRoute=orders"
+    },
+    {
+      "source": "/api/commercial/targets",
+      "destination": "/api/executive?crmRoute=targets"
+    },
     {
       "source": "/api/commercial/commissions",
       "destination": "/api/executive?crmRoute=commissions"
@@ -16,14 +23,28 @@
   "headers": [
     {
       "source": "/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
     },
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "X-Frame-Options", "value": "DENY" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        }
       ]
     }
   ]

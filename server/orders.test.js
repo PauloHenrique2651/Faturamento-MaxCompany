@@ -135,3 +135,14 @@ test('order PDF download is limited to an order from the reviewed catalog', asyn
   assert.equal(missing.status, 404);
   assert.ok(!missing.content);
 });
+
+test('both Vercel project roots route order requests to the authenticated API', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const path of ['../vercel.json', '../frontend-vercel/vercel.json']) {
+    const config = JSON.parse(await readFile(new URL(path, import.meta.url), 'utf8'));
+    assert.equal(
+      config.rewrites.find((r) => r.source === '/api/commercial/orders')?.destination,
+      '/api/executive?crmRoute=orders'
+    );
+  }
+});
