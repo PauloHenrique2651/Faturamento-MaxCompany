@@ -779,6 +779,13 @@ export async function syncSupabaseFromFalco() {
       ]);
     if (!maserpSales.available)
       throw new Error('Relatórios MASERP indisponíveis; preservado último conjunto confirmado');
+    if (state.reportCalendarVersion !== 'sql-calendar-utc-v1') {
+      // Retratos anteriores podem ter incluído o dia seguinte ao converter hora local.
+      state.maserpReports = {};
+      state.historicalReportAttempts = {};
+      state.lastHistoricalReportAt = null;
+      state.reportCalendarVersion = 'sql-calendar-utc-v1';
+    }
     state.maserpReports ||= {};
     state.maserpReports[end.slice(0, 7)] = maserpSales;
     const [previousStart, previousEnd] = monthlyReportPeriods(end)[1];

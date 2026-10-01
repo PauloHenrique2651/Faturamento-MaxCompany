@@ -296,3 +296,29 @@ test('mostrador mostra lucro, seis movimentos e dois estados dos pedidos sem dup
   assert.ok(!summary.includes('Saldo fiscal'));
   assert.ok(!summary.includes('Faturamento comercial'));
 });
+
+test('mês com notas e nenhum pedido mantém um único resumo sem rótulo XML', () => {
+  const r = renderFiscalViews([], [], '2026-10-01', '2026-10-01');
+  r.state.nfeData.synchronization = {
+    fresh: true,
+    updatedAt: '2026-10-01T12:00:00Z',
+    maserpSales: {
+      available: true,
+      startDate: '2026-10-01',
+      endDate: '2026-10-01',
+      commercial: [],
+      companies: [],
+      profitability: [{ companyCode: 1, net: 100, cost: 60, profit: 40 }],
+      incomingFreights: []
+    }
+  };
+  for (const render of ['nfeDashboard', 'revenueDashboard']) {
+    vm.runInContext(render + '()', r.context);
+    const html = r.nodes.get('#page').innerHTML;
+    assert.equal((html.match(/class="profit-hero"/g) || []).length, 1);
+    assert.ok(!html.includes('class="kpis"'));
+    assert.ok(!html.includes('class="fiscal-event-grid"'));
+    assert.ok(!html.includes('XML'));
+    assert.match(html, /Notas por empresa|Análise das notas/);
+  }
+});

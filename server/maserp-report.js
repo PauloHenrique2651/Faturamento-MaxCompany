@@ -1,3 +1,4 @@
+import { maserpCalendarDate } from './maserp-dates.js';
 import sql from 'mssql';
 import { readFileSync } from 'node:fs';
 
@@ -150,6 +151,7 @@ function databaseSettings() {
       trustServerCertificate:
         String(process.env.MASERP_SQL_TRUST_CERT || 'true').toLowerCase() === 'true',
       appName: 'CRM MASERP leitura',
+      useUTC: true,
       readOnlyIntent: true,
       enableArithAbort: true
     }
@@ -265,8 +267,8 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
     profitabilityRequest.input('empresa_VC', sql.VarChar(sql.MAX), companyCodes.join(','));
     profitabilityRequest.input('cliente_IN', sql.Int, null);
     profitabilityRequest.input('numero_IN', sql.Int, null);
-    profitabilityRequest.input('datainicio_DT', sql.DateTime, new Date(`${startDate}T00:00:00`));
-    profitabilityRequest.input('datafinal_DT', sql.DateTime, new Date(`${endDate}T23:59:59`));
+    profitabilityRequest.input('datainicio_DT', sql.DateTime, maserpCalendarDate(startDate));
+    profitabilityRequest.input('datafinal_DT', sql.DateTime, maserpCalendarDate(endDate));
     profitabilityRequest.input('retirarempresasdogrupo_BT', sql.Bit, true);
     profitabilityRequest.input('produto_IN', sql.Int, null);
     profitabilityRequest.input('NotasFiscais_BT', sql.Bit, true);
@@ -276,12 +278,8 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
     sellerProfitabilityRequest.input('empresa_VC', sql.VarChar(sql.MAX), companyCodes.join(','));
     sellerProfitabilityRequest.input('vendedor_IN', sql.Int, null);
     sellerProfitabilityRequest.input('numero_IN', sql.Int, null);
-    sellerProfitabilityRequest.input(
-      'datainicio_DT',
-      sql.DateTime,
-      new Date(`${startDate}T00:00:00`)
-    );
-    sellerProfitabilityRequest.input('datafinal_DT', sql.DateTime, new Date(`${endDate}T23:59:59`));
+    sellerProfitabilityRequest.input('datainicio_DT', sql.DateTime, maserpCalendarDate(startDate));
+    sellerProfitabilityRequest.input('datafinal_DT', sql.DateTime, maserpCalendarDate(endDate));
     sellerProfitabilityRequest.input('retirarempresasdogrupo_BT', sql.Bit, true);
     sellerProfitabilityRequest.input('NotasFiscais_BT', sql.Bit, true);
     sellerProfitabilityRequest.input('CupomFiscal_BT', sql.Bit, false);
@@ -298,13 +296,9 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
     incomingFreightRequest.input(
       'dataEntradaInicial_DT',
       sql.DateTime,
-      new Date(`${startDate}T00:00:00`)
+      maserpCalendarDate(startDate)
     );
-    incomingFreightRequest.input(
-      'dataEntradaFinal_DT',
-      sql.DateTime,
-      new Date(`${endDate}T23:59:59`)
-    );
+    incomingFreightRequest.input('dataEntradaFinal_DT', sql.DateTime, maserpCalendarDate(endDate));
     incomingFreightRequest.input('valorInicial_MN', sql.Money, null);
     incomingFreightRequest.input('valorFinal_MN', sql.Money, null);
     incomingFreightRequest.input('finalizadas_BT', sql.Bit, true);
