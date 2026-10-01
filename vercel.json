@@ -4,6 +4,10 @@
   "trailingSlash": false,
   "rewrites": [
     {
+      "source": "/api/commercial/wallet",
+      "destination": "/api/executive?crmRoute=wallet"
+    },
+    {
       "source": "/api/commercial/orders",
       "destination": "/api/executive?crmRoute=orders"
     },

@@ -12,6 +12,7 @@ import {
 import { salesTargetsRoute } from '../../server/sales-targets.js';
 import { sellerCommissionsRoute } from '../../server/seller-commissions.js';
 import { equivalencesRoute } from '../../server/product-equivalences.js';
+import { walletRoute, validWalletStoragePath } from '../../server/wallet-route.js';
 import { ordersRoute, validOrderStoragePath } from '../../server/order-route.js';
 
 const scrypt = promisify(scryptCallback);
@@ -67,7 +68,8 @@ async function supabase(path, options = {}) {
 async function downloadStorageObject(path) {
   if (
     !/^\d+\/(?:outgoing|incoming)\/\d{44}\.(?:xml|pdf|html)$/.test(String(path || '')) &&
-    !validOrderStoragePath(path)
+    !validOrderStoragePath(path) &&
+    !validWalletStoragePath(path)
   )
     throw new Error('Caminho de documento fiscal inválido.');
   const base = env('SUPABASE_URL').replace(/\/$/, '');
@@ -568,6 +570,7 @@ async function syncOverview() {
       sefaz: successful?.details?.sefaz || [],
       maserpSales: successful?.details?.maserpSales || null,
       maserpReports: successful?.details?.maserpReports || {},
+      wallet: successful?.details?.wallet || null,
       pendingArtifacts: successful?.details?.pendingArtifacts ?? null
     };
   } catch {
@@ -678,7 +681,7 @@ async function handle(req, res) {
   const crmRoute = url.searchParams.get('crmRoute');
   const path =
     url.pathname === '/api/executive' &&
-    ['targets', 'equivalences', 'commissions', 'orders'].includes(crmRoute)
+    ['targets', 'equivalences', 'commissions', 'orders', 'wallet'].includes(crmRoute)
       ? `/api/commercial/${crmRoute}`
       : url.pathname;
   if (path === '/api/auth/login' && req.method === 'POST') {
@@ -754,6 +757,15 @@ async function handle(req, res) {
     )
   )
     return json(res, 403, { error: 'Acesso restrito ao fiscal.' });
+  if (path === '/api/commercial/wallet') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
+    const result = await walletRoute({
+      user,
+      metadata: (await syncOverview()).wallet,
+      download: downloadStorageObject
+    });
+    return json(res, result.status, result.body);
+  }
   if (path === '/api/commercial/orders') {
     if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
     const result = await ordersRoute({

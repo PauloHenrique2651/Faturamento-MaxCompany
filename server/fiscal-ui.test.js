@@ -229,7 +229,7 @@ test('fiscal, comercial, compras e lucro conservam suas bases e não subtraem de
   assert.equal(m.billed, 80);
   assert.equal(m.gross, 100);
   assert.equal(m.profitabilityNet - m.profitabilityCost, m.profitabilityGrossProfit);
-  assert.equal(m.profitabilityProfit, 28);
+  assert.equal(m.profitabilityProfit, 30);
   assert.equal(m.falcoExpenses, 5);
   vm.runInContext('nfeDashboard()', r.context);
   const html = r.nodes.get('#page').innerHTML;

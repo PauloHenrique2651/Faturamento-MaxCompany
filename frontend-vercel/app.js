@@ -1,3 +1,4 @@
+import { renderWalletPage } from './ui/wallet.js';
 import { renderOrdersPage } from './ui/orders.js';
 import { profitabilityComposition } from './lib/profitability.js';
 import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
@@ -824,7 +825,7 @@ function revenueDashboard() {
     maserpReportPanel(data) +
     (hasFalcoPeriod
       ? ''
-      : `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas faturadas', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? (falco.profitabilityAvailable ? `Lucro líquido ${money(falco.profitabilityProfit)} · após ${money(falco.incomingFreightExpense)} de fretes de entrada` : 'Lucratividade aguardando sincronização') : `${money(data.saleValue)} em itens elegíveis`, 'wallet', true, href('dashboard'), hasFalcoPeriod ? 'Faturamento comercial e lucro do Relatório de Lucratividade do Falco.' : 'Itens das notas classificados pelos CFOPs financeiros.')}${kpi(hasFalcoPeriod ? 'Pedidos a faturar' : 'Vendas após devoluções', bigMoney(hasFalcoPeriod ? falco.pending : net), hasFalcoPeriod ? `${num(falco.pendingOrders)} pedidos com saldo pendente` : 'Vendas financeiras menos devoluções vinculadas', 'trend', false, href('dashboard'))}${kpi(hasFalcoPeriod ? 'NF-e emitidas no Falco' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas · antes das devoluções` : 'Não equivale a faturamento', 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal após devolução' : 'Devoluções financeiras', bigMoney(hasFalcoPeriod ? falco.net : returned), hasFalcoPeriod ? `${money(falco.returned)} devolvidos no Falco` : `${num(received?.financialLinkedCount || 0)} confirmadas`, 'box', false, 'devolucoes')}</section>`) +
+      : `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas faturadas', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? (falco.profitabilityAvailable ? `Lucro líquido ${money(falco.profitabilityProfit)} · frete já incluído no custo` : 'Lucratividade aguardando sincronização') : `${money(data.saleValue)} em itens elegíveis`, 'wallet', true, href('dashboard'), hasFalcoPeriod ? 'Faturamento comercial e lucro do Relatório de Lucratividade do Falco.' : 'Itens das notas classificados pelos CFOPs financeiros.')}${kpi(hasFalcoPeriod ? 'Pedidos a faturar' : 'Vendas após devoluções', bigMoney(hasFalcoPeriod ? falco.pending : net), hasFalcoPeriod ? `${num(falco.pendingOrders)} pedidos com saldo pendente` : 'Vendas financeiras menos devoluções vinculadas', 'trend', false, href('dashboard'))}${kpi(hasFalcoPeriod ? 'NF-e emitidas no Falco' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas · antes das devoluções` : 'Não equivale a faturamento', 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal após devolução' : 'Devoluções financeiras', bigMoney(hasFalcoPeriod ? falco.net : returned), hasFalcoPeriod ? `${money(falco.returned)} devolvidos no Falco` : `${num(received?.financialLinkedCount || 0)} confirmadas`, 'box', false, 'devolucoes')}</section>`) +
     `<article class="panel nfe-trend">${panelHead('Vendas após devoluções acumulado', targetPath ? 'Azul: realizado · verde: meta acumulada' : 'Realizado acumulado · defina uma meta para comparar')}<svg class="nfe-line-chart" viewBox="0 0 710 205" role="img" aria-label="Vendas após devoluções acumulado e meta"><line x1="54" x2="654" y1="170" y2="170" stroke="#d9e0e5"/><path d="${cumulativePath}" fill="none" stroke="var(--accent)" stroke-width="3"/>${targetPath ? `<path d="${targetPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${daily.map((row, index) => `<circle cx="${cx(index)}" cy="${cy(row.cumulative)}" r="2.5" fill="var(--accent)"><title>${date(row.date)} · realizado ${money(row.cumulative)}${row.target === null ? '' : ` · meta ${money(row.target)}`}</title></circle>`).join('')}</svg></article>` +
     (hasFalcoPeriod ? '' : fiscalEventCards(data, state.incomingData)) +
     `<details class="panel fiscal-analysis" ${state.fiscalAnalysisOpen ? 'open' : ''}><summary>Análise das notas e conciliação de produtos</summary><div class="fiscal-analysis-content"><div class="notice">Do valor fiscal emitido, ${money(data.returns.value)} são devoluções emitidas a fornecedores. Os itens sem efeito financeiro e as diferenças sem rateio ficam fora das vendas financeiras. ${num((received?.count || 0) - (received?.financialLinkedCount || 0))} devoluções recebidas aguardam vínculo ou conciliação financeira; ${num(state.incomingData?.summaryOnlyCount || 0)} entradas estão apenas em resumo.</div>` +
@@ -1053,11 +1054,11 @@ function freightDashboard() {
       'MaxCompany / Fretes'
     ) +
     nfeSource(data, true) +
-    `<section class="kpis freight-headline">${kpi('Fretes de entrada', bigMoney(incomingValue), `${num(incoming.length)} conhecimentos · entram em outras despesas`, 'truck', true)}${kpi('Fretes de saída', bigMoney(data.freightValue), `${num(outgoing.length)} NF-e com vFrete`, 'wallet')}${kpi('Total documentado', bigMoney(incomingValue + data.freightValue), 'Entrada + saída, mantidas separadas abaixo', 'document')}${kpi('Média por entrada', bigMoney(incoming.length ? incomingValue / incoming.length : 0), 'Conhecimentos de frete de entrada', 'trend')}</section>` +
+    `<section class="kpis freight-headline">${kpi('Fretes de entrada', bigMoney(incomingValue), `${num(incoming.length)} conhecimentos · já incluídos no custo das vendas`, 'truck', true)}${kpi('Fretes de saída', bigMoney(data.freightValue), `${num(outgoing.length)} NF-e com vFrete`, 'wallet')}${kpi('Total documentado', bigMoney(incomingValue + data.freightValue), 'Entrada + saída, mantidas separadas abaixo', 'document')}${kpi('Média por entrada', bigMoney(incoming.length ? incomingValue / incoming.length : 0), 'Conhecimentos de frete de entrada', 'trend')}</section>` +
     `<div class="freight-directions"><article class="panel freight-direction incoming">${panelHead('Entrada', 'Conhecimentos de frete finalizados · data de entrada')}<div class="freight-direction-total"><span>Total de entrada</span><strong>${money(incomingValue)}</strong><small>${num(incoming.length)} documentos · fonte MASERP em tempo real</small></div>${nfeRanking('Transportadoras de entrada', 'Valor dos conhecimentos recebidos', incomingCarrierRows, false, 10)}</article><article class="panel freight-direction outgoing">${panelHead('Saída', 'Frete destacado nas NF-e emitidas')}<div class="freight-direction-total"><span>Total de saída</span><strong>${money(data.freightValue)}</strong><small>${num(outgoing.length)} notas com valor de frete</small></div>${nfeRanking('Transportadoras de saída', 'vFrete das notas emitidas', data.carriers, false, 10)}</article></div>` +
     `<article class="panel freight-entry-list">${panelHead('Conhecimentos de frete de entrada', 'Documento, transportadora, CFOP, entrada e valor')}<div class="table-wrap"><table class="data-table"><thead><tr><th>Empresa</th><th>Documento</th><th>Transportadora</th><th>CFOP</th><th>Entrada</th><th class="num">Valor</th></tr></thead><tbody>${incoming.map((row) => `<tr><td>${esc(xmlCompanies.find((company) => Number(company.id) === companyIds[row.companyCode])?.nome || `Empresa ${row.companyCode}`)}</td><td>${esc(row.documentNumber)}</td><td>${esc(row.carrier)}<small class="code">${esc(row.carrierId)}</small></td><td>${esc(row.cfop)}</td><td>${date(String(row.entryDate).slice(0, 10))}</td><td class="num"><strong>${money(row.value)}</strong></td></tr>`).join('') || `<tr><td colspan="6">Aguardando conhecimentos de frete do Falco para este período.</td></tr>`}</tbody></table></div></article>` +
     `<article class="panel document-panel">${panelHead('NF-e de saída com frete', 'Clique para ver transportadora, modalidade e Nota')}${documentRows(outgoing, 'saida')}</article>` +
-    `<p class="nfe-note">Entrada usa o relatório de conhecimentos de frete finalizados do MASERP e entra em Outras despesas na lucratividade. Saída usa o vFrete das NF-e emitidas. Nenhum dos dois valores é somado ao faturamento.</p>`;
+    `<p class="nfe-note">Entrada usa o relatório de conhecimentos de frete finalizados do MASERP e já está incluída no custo das vendas; não é descontada novamente. Saída usa o vFrete das NF-e emitidas. Nenhum dos dois valores é somado ao faturamento.</p>`;
 }
 function outgoingDocuments() {
   const data = state.nfeData;
@@ -1530,8 +1531,8 @@ function maserpMetrics(data) {
   const profitabilityCost = sum(profitabilityRows, 'cost');
   const profitabilityGrossProfit = sum(profitabilityRows, 'profit');
   const incomingFreightExpense = sum(incomingFreightRows, 'value');
-  const profitabilityProfit = profitabilityGrossProfit - incomingFreightExpense;
-  const profitabilityExpenses = sum(profitabilityRows, 'expenses') + incomingFreightExpense;
+  const profitabilityProfit = profitabilityGrossProfit;
+  const profitabilityExpenses = sum(profitabilityRows, 'expenses');
   return {
     report,
     ids,
@@ -1612,16 +1613,16 @@ function maserpReportPanel(data) {
   const profit = metrics.profitabilityAvailable
     ? `<article class="panel profitability-panel profit-priority">
     ${panelHead('Lucro das vendas', 'Mesmo período e empresa selecionados')}
-    <div class="profit-hero"><div><span>Lucro após custos e despesas</span><strong>${money(c.profit)}</strong><small>${c.markup === null ? 'Percentual indisponível: custo zero' : num(c.markup) + '% sobre o custo das vendas'}</small></div>${c.reconciled ? '' : `<p class="profit-warning">${esc(reconciliation)}</p>`}</div>
+    <div class="profit-hero"><div><span>Lucro após custos e despesas</span><strong>${money(c.profit)}</strong><small>${c.margin === null ? 'Margem indisponível: vendas líquidas zero' : num(c.margin) + '% de margem sobre vendas após devoluções'}</small></div>${c.reconciled ? '' : `<p class="profit-warning">${esc(reconciliation)}</p>`}</div>
     <div class="profit-equation">
       <a href="${esc(href('emitidas', { operacao: 'venda' }))}"><span>Vendas faturadas</span><strong>${money(c.sales)}</strong><small>Antes das devoluções</small></a>
       <a href="${esc(href('entradas'))}"><span>Compras</span><strong>${money(purchases)}</strong><small>Não são o custo das vendas</small></a>
       <a href="${esc(href('canceladas'))}"><span>Notas canceladas</span><strong>${money(data.canceledValue || 0)}</strong><small>Já excluídas das vendas</small></a>
       <a href="${esc(href('devolucoes', { tipoDevolucao: 'venda' }))}"><span>Vendas devolvidas</span><strong>${money(c.returned)}</strong></a>
       <div><span>Custo das vendas</span><strong>${money(c.cost)}</strong><small>Custo apurado pelo Falco</small></div>
-      <a href="${esc(href('fretes'))}"><span>Frete de entrada</span><strong>${money(c.freight)}</strong><small>Descontado do lucro</small></a>
+      <a href="${esc(href('fretes'))}"><span>Frete de entrada</span><strong>${money(c.freight)}</strong><small>Já incluído no custo das vendas</small></a>
     </div>
-    <details class="profit-criteria" ${state.profitCriteriaOpen ? 'open' : ''}><summary>Ver a conta do lucro</summary><p>${money(c.sales)} em vendas − ${money(c.returned)} devolvidos − ${money(c.expenses)} em outras despesas − ${money(c.cost)} de custo − ${money(c.freight)} de frete = ${money(c.profit)} de lucro após despesas. Compras não substituem o custo. Canceladas já estão excluídas das vendas e não são descontadas novamente.</p><p>Fonte: relatório de lucratividade Falco. Base líquida ${money(c.base)}; lucro Falco antes do frete ${money(c.falcoProfit)}. Diferença entre saldo fiscal e base líquida: ${money(metrics.net - c.base)}. O percentual é sobre o custo; o resultado não representa lucro contábil.</p></details>
+    <details class="profit-criteria" ${state.profitCriteriaOpen ? 'open' : ''}><summary>Ver a conta do lucro</summary><p>${money(c.sales)} em vendas − ${money(c.returned)} devolvidos − ${money(c.expenses)} em outras despesas − ${money(c.cost)} de custo = ${money(c.profit)} de lucro após despesas. O frete de entrada já integra o custo e não é abatido novamente. Compras não substituem o custo. Canceladas já estão excluídas das vendas e não são descontadas novamente.</p><p>Fonte: relatório de lucratividade Falco. Base líquida ${money(c.base)}; lucro Falco, com frete incluído no custo ${money(c.falcoProfit)}. Diferença entre saldo fiscal e base líquida: ${money(metrics.net - c.base)}. A margem é o lucro dividido pelas vendas após devoluções; o resultado não representa lucro contábil.</p></details>
   </article>`
     : '';
 
@@ -1693,7 +1694,7 @@ function nfeDashboard() {
     maserpReportPanel(data) +
     (hasFalcoPeriod
       ? ''
-      : `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas faturadas', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? (falco.profitabilityAvailable ? `Lucro líquido ${money(falco.profitabilityProfit)} · após ${money(falco.incomingFreightExpense)} de fretes de entrada` : 'Lucratividade aguardando sincronização') : money(data.saleValue), 'wallet', true, 'faturamento', 'Valor do relatório comercial e lucratividade oficial do Falco para o mesmo período selecionado.')}${kpi(hasFalcoPeriod ? 'Pedidos a faturar' : 'Vendas após devoluções', bigMoney(hasFalcoPeriod ? falco.pending : real), hasFalcoPeriod ? `${num(falco.pendingOrders)} pedidos com saldo pendente` : 'Itens financeiros menos devoluções vinculadas', 'trend', false, 'faturamento')}${kpi(hasFalcoPeriod ? 'NF-e emitidas' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas no relatório fiscal` : money(data.value), 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal' : 'Compras financeiras', bigMoney(hasFalcoPeriod ? falco.net : purchases), hasFalcoPeriod ? `Após ${money(falco.returned)} devolvidos` : 'Entradas com efeito financeiro', 'box', false, hasFalcoPeriod ? 'devolucoes' : 'entradas')}</section>`) +
+      : `<section class="kpis">${kpi(hasFalcoPeriod ? 'Faturado no Falco' : 'Vendas faturadas', bigMoney(hasFalcoPeriod ? falco.billed : data.saleValue), hasFalcoPeriod ? (falco.profitabilityAvailable ? `Lucro líquido ${money(falco.profitabilityProfit)} · frete já incluído no custo` : 'Lucratividade aguardando sincronização') : money(data.saleValue), 'wallet', true, 'faturamento', 'Valor do relatório comercial e lucratividade oficial do Falco para o mesmo período selecionado.')}${kpi(hasFalcoPeriod ? 'Pedidos a faturar' : 'Vendas após devoluções', bigMoney(hasFalcoPeriod ? falco.pending : real), hasFalcoPeriod ? `${num(falco.pendingOrders)} pedidos com saldo pendente` : 'Itens financeiros menos devoluções vinculadas', 'trend', false, 'faturamento')}${kpi(hasFalcoPeriod ? 'NF-e emitidas' : 'Valor fiscal emitido', bigMoney(hasFalcoPeriod ? falco.gross : data.value), hasFalcoPeriod ? `${num(falco.invoices)} notas no relatório fiscal` : money(data.value), 'document', false, 'emitidas')}${kpi(hasFalcoPeriod ? 'Saldo fiscal' : 'Compras financeiras', bigMoney(hasFalcoPeriod ? falco.net : purchases), hasFalcoPeriod ? `Após ${money(falco.returned)} devolvidos` : 'Entradas com efeito financeiro', 'box', false, hasFalcoPeriod ? 'devolucoes' : 'entradas')}</section>`) +
     (hasFalcoPeriod ? '' : fiscalEventCards(data, state.incomingData)) +
     `<div class="nfe-charts"><article class="panel nfe-trend">${panelHead('Fiscal × itens financeiros por dia', 'Emissão por data da NF-e · azul: valor fiscal · verde: itens com CFOP financeiro')}<div class="nfe-chart-switch"><button data-chart-mode="value" class="${mode === 'value' ? 'active' : ''}">Valor</button><button data-chart-mode="count" class="${mode === 'count' ? 'active' : ''}">Quantidade</button></div>${rows.length ? `<svg class="nfe-line-chart" viewBox="0 0 720 230" role="img" aria-label="Valor fiscal e itens financeiros por dia">${[0, 0.25, 0.5, 0.75, 1].map((part) => `<line x1="52" x2="678" y1="${y(maximum * part)}" y2="${y(maximum * part)}" stroke="#e4e5e9"/><text x="44" y="${y(maximum * part) + 4}" text-anchor="end">${mode === 'value' ? short(maximum * part) : num(maximum * part)}</text>`).join('')}<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="3"/>${mode === 'value' ? `<path d="${financialPath}" fill="none" stroke="#13986f" stroke-width="3"/>` : ''}${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[metric])}" r="3" fill="var(--accent)"><title>${date(row.date)} · fiscal ${money(row.value)} · financeiro ${money(row.saleValue || 0)}</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index)}" y="218" text-anchor="${index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${date(rows[index].date)}</text>`).join('')}</svg>` : empty('Sem notas neste período.')}</article><article class="panel nfe-companies">${panelHead('Notas por empresa', 'Itens financeiros e valor fiscal das NF-e autorizadas')}${data.companies.length ? data.companies.map((company) => `<div class="nfe-company"><div><strong>${esc(company.name)}</strong><span>Itens financeiros líquidos ${money((company.saleValue || 0) - (returnedByCompany.get(company.name) || 0))} · Fiscal ${money(company.value)} · ${num(company.count)} NF-e</span></div><div class="nfe-bar"><span style="width:${(company.value / companyMax) * 100}%"></span></div></div>`).join('') : empty('Nenhuma empresa com notas no período.')}</article></div>` +
     `<div class="nfe-charts nfe-charts-secondary">${nfeRanking('Vendas por vendedor', `${num(data.unattributedCount)} notas sem vendedor na nota`, data.sellers, false, 8, 'seller')}${nfeRanking('Principais clientes', 'Valor consolidado por grupo de CNPJs', data.customerGroups, false, 8, 'customerGroup')}</div>` +
@@ -1713,7 +1714,11 @@ function nfeDashboard() {
 function ordersPage() {
   renderOrdersPage({ data: state.orderData, state, page: $('#page'), header: head });
 }
+function walletPage() {
+  renderWalletPage({ data: state.walletData, state, page: $('#page'), header: head });
+}
 const snapshotRenderers = {
+  carteira: walletPage,
   pedidos: ordersPage,
   dashboard: nfeDashboard,
   mostrador: paintMostrador,
@@ -1741,6 +1746,7 @@ function rememberView(scope) {
   if (!snapshotRenderers[state.view]) return;
   viewSnapshots.set(scope, {
     orderData: state.orderData,
+    walletData: state.walletData,
     nfeData: state.nfeData,
     incomingData: state.incomingData,
     targets: state.targets
@@ -1789,6 +1795,24 @@ async function load(background = false) {
     $('#page').innerHTML =
       `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Carregando notas…'}</div>`;
   try {
+    if (state.view === 'carteira') {
+      const data = await fetchJson('/api/commercial/wallet');
+      if (seq !== state.seq) return;
+      state.walletData = data;
+      rememberView(snapshotScope);
+      showXmlCompanies();
+      walletPage();
+      $('#sync-status').textContent = data.stale
+        ? 'Carteira aguardando revisão'
+        : 'Carteira revisada em ' + new Date(data.checkedAt).toLocaleString('pt-BR');
+      $('#connection-indicator').setAttribute('aria-label', 'Carteira do MASERP publicada');
+      $('#data-source-status').textContent = 'Carteira a receber · atualização automática';
+      $('#refresh-cadence').textContent = 'Tela verifica a carteira a cada 10 s';
+      $('#notice').innerHTML = data.stale
+        ? '<div class=notice>Exibindo a última carteira confirmada. A revisão será retomada pelo coletor.</div>'
+        : '';
+      return;
+    }
     if (state.view === 'pedidos') {
       const data = await fetchJson(`/api/commercial/orders?${state.params}`);
       if (seq !== state.seq) return;
@@ -2012,7 +2036,7 @@ async function load(background = false) {
       !restored &&
       snapshot &&
       sameScope &&
-      state.view !== 'pedidos' &&
+      !['pedidos', 'carteira'].includes(state.view) &&
       !legacyViews.has(state.view) &&
       state.view !== 'dashboard'
     ) {

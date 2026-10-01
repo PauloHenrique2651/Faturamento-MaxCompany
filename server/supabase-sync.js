@@ -1,4 +1,6 @@
 import { historicalPage, historicalReportPeriod } from './reconciliation-plan.js';
+import { readMaserpWallet } from './maserp-wallet.js';
+import { publishWallet } from './wallet-route.js';
 import { publishOrderCatalogs } from './order-files.js';
 import { monthlyReportPeriods } from '../public/lib/maserp-periods.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -938,6 +940,7 @@ export async function syncSupabaseFromFalco() {
       Object.entries(state.completedDocuments || {}).slice(-50000)
     );
     await saveState(state);
+    const wallet = await publishWallet(await readMaserpWallet(), state, uploadObject);
     const orderPublication = await publishOrderCatalogs(
       Object.values(state.maserpReports),
       state,
@@ -945,6 +948,7 @@ export async function syncSupabaseFromFalco() {
     );
     await saveState(state);
     const details = {
+      wallet,
       orderPublication,
       start,
       end,
@@ -980,6 +984,7 @@ export async function syncSupabaseFromFalco() {
     await writeFile(
       reportPath + '.tmp',
       JSON.stringify({
+        wallet,
         updatedAt: state.lastSuccessAt,
         maserpSales,
         maserpReports: state.maserpReports,

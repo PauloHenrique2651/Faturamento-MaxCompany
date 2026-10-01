@@ -2758,3 +2758,72 @@ a.commercial-card:focus-visible {
     max-width: 100%;
   }
 }
+.wallet-panel {
+  border-radius: 20px;
+  padding: 24px;
+}
+.wallet-panel h2 {
+  font-size: 18px;
+  margin: 26px 0 16px;
+}
+.wallet-primary {
+  background: #edf8f4;
+  border-radius: 14px;
+  color: #08765b;
+}
+.wallet-days {
+  display: grid;
+  gap: 12px;
+  max-height: 340px;
+  overflow: auto;
+  padding: 4px;
+}
+.wallet-day {
+  display: grid;
+  grid-template-columns: 160px 1fr 150px;
+  gap: 16px;
+  align-items: center;
+  font-size: 13px;
+}
+.wallet-day > div {
+  height: 9px;
+  border-radius: 9px;
+  background: #edf2f6;
+  overflow: hidden;
+}
+.wallet-day i {
+  display: block;
+  height: 100%;
+  border-radius: 9px;
+  background: #417795;
+}
+.wallet-day strong {
+  text-align: right;
+}
+body[data-view='carteira'] .role-select,
+body[data-view='carteira'] label:has(#cfop-filter),
+body[data-view='carteira'] label:has(#financial-effect) {
+  display: none;
+}
+@media (max-width: 600px) {
+  .wallet-panel {
+    padding: 16px;
+  }
+  .wallet-day {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .wallet-day > div {
+    grid-column: 1/-1;
+    grid-row: 2;
+  }
+  .wallet-day strong {
+    font-size: 12px;
+  }
+}
+
+body[data-view='pedidos'] .role-select,
+body[data-view='pedidos'] label:has(#cfop-filter),
+body[data-view='pedidos'] label:has(#financial-effect) {
+  display: none;
+}

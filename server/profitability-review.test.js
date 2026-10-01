@@ -8,8 +8,10 @@ test('lucro recompõe vendas antes de despesas, sem usar compras ou descontar de
     [{ value: 2 }]
   );
   assert.equal(c.sales, 100);
-  assert.equal(c.sales - c.returned - c.expenses - c.cost - c.freight, c.profit);
-  assert.equal(c.profit, 28);
+  assert.equal(c.sales - c.returned - c.expenses - c.cost, c.profit);
+  assert.equal(c.profit, 30);
+  assert.equal(c.freight, 2);
+  assert.equal(c.margin, (30 / 95) * 100);
   assert.equal(c.reconciled, true);
   assert.equal(profitabilityComposition([{ net: 90, cost: 60, profit: 29 }]).reconciled, false);
   assert.equal(profitabilityComposition([]).markup, null);

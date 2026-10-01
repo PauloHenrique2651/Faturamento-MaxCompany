@@ -37,7 +37,9 @@ export async function crmCloudRequest(path, options = {}) {
 
 export async function crmOrderDownload(path) {
   const { validOrderStoragePath } = await import('./order-route.js');
-  if (!validOrderStoragePath(path)) throw new Error('Catálogo de pedidos inválido.');
+  const { validWalletStoragePath } = await import('./wallet-route.js');
+  if (!validOrderStoragePath(path) && !validWalletStoragePath(path))
+    throw new Error('Catálogo de pedidos inválido.');
   const saved = JSON.parse(await readFile(process.env.SUPABASE_CONFIG_PATH || localConfig, 'utf8'));
   const base = (process.env.SUPABASE_URL || saved.url).replace(/\/$/, '');
   const secret =

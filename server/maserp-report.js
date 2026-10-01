@@ -7,7 +7,7 @@ const defaultConfigPath = '\\\\maxcompany\\DEPLOY\\Falco Atualizador-Deploy\\CON
 const companyCodes = [1, 3, 5, 6];
 let poolPromise;
 
-async function getMaserpPool() {
+export async function getMaserpPool() {
   const settings = databaseSettings();
   if (!settings) throw new Error('MASERP não configurado');
   if (!poolPromise) {
