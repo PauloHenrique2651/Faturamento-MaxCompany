@@ -111,3 +111,12 @@ test('carteira lê parcelas abertas e revisa todo o saldo sem filtro de emissão
   const collector = await readFile(new URL('./supabase-sync.js', import.meta.url), 'utf8');
   assert.match(collector, /publishWallet\(await readMaserpWallet\(\), state, uploadObject\)/);
 });
+
+test('carteira permite situação e ordenação sem alterar a separação dos recebimentos', () => {
+  const params = { inicio: '2026-10-01', fim: '2026-10-31', today: '2026-10-02' };
+  assert.equal(walletSelection(rows, { ...params, status: 'forecast' }).totals.forecast, 100);
+  assert.equal(walletSelection(rows, { ...params, status: 'overdue' }).totals.overdue, 20);
+  assert.equal(walletSelection(rows, { ...params, status: 'anticipated' }).totals.anticipated, 40);
+  assert.equal(walletSelection(rows, { ...params, sort: 'value' }).rows[0].amount, 100);
+  assert.equal(walletSelection(rows, { ...params, sort: 'value' }).days[0].date, '2026-10-01');
+});

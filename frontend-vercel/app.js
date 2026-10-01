@@ -1,4 +1,5 @@
 import { renderWalletPage } from './ui/wallet.js';
+import { renderPayablesPage } from './ui/payables.js';
 import { renderOrdersPage } from './ui/orders.js';
 import { profitabilityComposition } from './lib/profitability.js';
 import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
@@ -1615,14 +1616,14 @@ function maserpReportPanel(data) {
     ${panelHead('Lucro das vendas', 'Mesmo período e empresa selecionados')}
     <div class="profit-hero"><div><span>Lucro após custos e despesas</span><strong>${money(c.profit)}</strong><small>${c.margin === null ? 'Margem indisponível: vendas líquidas zero' : num(c.margin) + '% de margem sobre vendas após devoluções'}</small></div>${c.reconciled ? '' : `<p class="profit-warning">${esc(reconciliation)}</p>`}</div>
     <div class="profit-equation">
-      <a href="${esc(href('emitidas', { operacao: 'venda' }))}"><span>Vendas faturadas</span><strong>${money(c.sales)}</strong><small>Antes das devoluções</small></a>
+      <a href="${esc(href('emitidas', { operacao: 'venda' }))}"><span>Vendas faturadas</span><strong>${money(c.sales)}</strong><small>Total das notas + outras despesas · antes das devoluções</small></a>
       <a href="${esc(href('entradas'))}"><span>Compras</span><strong>${money(purchases)}</strong><small>Não são o custo das vendas</small></a>
       <a href="${esc(href('canceladas'))}"><span>Notas canceladas</span><strong>${money(data.canceledValue || 0)}</strong><small>Já excluídas das vendas</small></a>
       <a href="${esc(href('devolucoes', { tipoDevolucao: 'venda' }))}"><span>Vendas devolvidas</span><strong>${money(c.returned)}</strong></a>
       <div><span>Custo das vendas</span><strong>${money(c.cost)}</strong><small>Custo apurado pelo Falco</small></div>
       <a href="${esc(href('fretes'))}"><span>Frete de entrada</span><strong>${money(c.freight)}</strong><small>Já incluído no custo das vendas</small></a>
     </div>
-    <details class="profit-criteria" ${state.profitCriteriaOpen ? 'open' : ''}><summary>Ver a conta do lucro</summary><p>${money(c.sales)} em vendas − ${money(c.returned)} devolvidos − ${money(c.expenses)} em outras despesas − ${money(c.cost)} de custo = ${money(c.profit)} de lucro após despesas. O frete de entrada já integra o custo e não é abatido novamente. Compras não substituem o custo. Canceladas já estão excluídas das vendas e não são descontadas novamente.</p><p>Fonte: relatório de lucratividade Falco. Base líquida ${money(c.base)}; lucro Falco, com frete incluído no custo ${money(c.falcoProfit)}. Diferença entre saldo fiscal e base líquida: ${money(metrics.net - c.base)}. A margem é o lucro dividido pelas vendas após devoluções; o resultado não representa lucro contábil.</p></details>
+    <details class="profit-criteria" ${state.profitCriteriaOpen ? 'open' : ''}><summary>Ver a conta do lucro</summary><p>${money(c.sales)} em vendas − ${money(c.returned)} devolvidos − ${money(c.expenses)} em outras despesas − ${money(c.cost)} de custo = ${money(c.profit)} de lucro após despesas. O frete de entrada já integra o custo e não é abatido novamente. Compras não substituem o custo. Canceladas já estão excluídas das vendas e não são descontadas novamente.</p><p>Total das notas no relatório de lucratividade: ${money(c.notesSubtotal)}. Outras despesas: ${money(c.expenses)}. Total faturado com outras despesas: ${money(c.sales)}.</p><p>Total Geral do Falco após devoluções: ${money(c.base)} + ${money(c.expenses)} em outras despesas = ${money(c.totalWithExpenses)} no Total final do relatório.</p><p>Fonte: relatório de lucratividade Falco. Base usada no lucro ${money(c.base)}; lucro Falco, com frete incluído no custo ${money(c.falcoProfit)}. As outras despesas compõem o Total final e já estão separadas na base usada no lucro; não são descontadas novamente. A margem é o lucro dividido pelas vendas após devoluções; o resultado não representa lucro contábil.</p></details>
   </article>`
     : '';
 
@@ -1715,9 +1716,25 @@ function ordersPage() {
   renderOrdersPage({ data: state.orderData, state, page: $('#page'), header: head });
 }
 function walletPage() {
-  renderWalletPage({ data: state.walletData, state, page: $('#page'), header: head });
+  renderWalletPage({
+    data: state.walletData,
+    payables: state.payablesData,
+    state,
+    page: $('#page'),
+    header: head
+  });
+}
+function payablesPage() {
+  renderPayablesPage({
+    data: state.payablesData,
+    wallet: state.walletData,
+    state,
+    page: $('#page'),
+    header: head
+  });
 }
 const snapshotRenderers = {
+  pagar: payablesPage,
   carteira: walletPage,
   pedidos: ordersPage,
   dashboard: nfeDashboard,
@@ -1747,6 +1764,7 @@ function rememberView(scope) {
   viewSnapshots.set(scope, {
     orderData: state.orderData,
     walletData: state.walletData,
+    payablesData: state.payablesData,
     nfeData: state.nfeData,
     incomingData: state.incomingData,
     targets: state.targets
@@ -1795,21 +1813,34 @@ async function load(background = false) {
     $('#page').innerHTML =
       `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Carregando notas…'}</div>`;
   try {
-    if (state.view === 'carteira') {
-      const data = await fetchJson('/api/commercial/wallet');
+    if (['carteira', 'pagar'].includes(state.view)) {
+      const results = await Promise.allSettled([
+        fetchJson('/api/commercial/wallet'),
+        fetchJson('/api/commercial/payables')
+      ]);
       if (seq !== state.seq) return;
-      state.walletData = data;
+      const keys = ['walletData', 'payablesData'];
+      for (let i = 0; i < keys.length; i++) {
+        if (results[i].status === 'fulfilled') state[keys[i]] = results[i].value;
+        else if (state[keys[i]]) state[keys[i]] = { ...state[keys[i]], stale: true };
+      }
+      const data = state.view === 'pagar' ? state.payablesData : state.walletData;
+      if (!data) throw results[state.view === 'pagar' ? 1 : 0].reason;
       rememberView(snapshotScope);
       showXmlCompanies();
-      walletPage();
-      $('#sync-status').textContent = data.stale
-        ? 'Carteira aguardando revisão'
-        : 'Carteira revisada em ' + new Date(data.checkedAt).toLocaleString('pt-BR');
-      $('#connection-indicator').setAttribute('aria-label', 'Carteira do MASERP publicada');
-      $('#data-source-status').textContent = 'Carteira a receber · atualização automática';
-      $('#refresh-cadence').textContent = 'Tela verifica a carteira a cada 10 s';
-      $('#notice').innerHTML = data.stale
-        ? '<div class=notice>Exibindo a última carteira confirmada. A revisão será retomada pelo coletor.</div>'
+      (state.view === 'pagar' ? payablesPage : walletPage)();
+      const stale =
+        results.some((r) => r.status === 'rejected') ||
+        state.walletData?.stale ||
+        state.payablesData?.stale;
+      $('#sync-status').textContent = stale
+        ? 'Uma carteira aguarda revisão'
+        : 'Financeiro revisado em ' + new Date(data.checkedAt).toLocaleString('pt-BR');
+      $('#connection-indicator').setAttribute('aria-label', 'Carteiras do MASERP publicadas');
+      $('#data-source-status').textContent = 'Receber e pagar · atualização automática';
+      $('#refresh-cadence').textContent = 'Tela verifica as carteiras a cada 10 s';
+      $('#notice').innerHTML = stale
+        ? '<div class="notice">Uma consulta aguarda revisão. Os últimos dados confirmados permanecem disponíveis, com os horários indicados em cada carteira.</div>'
         : '';
       return;
     }
@@ -2036,7 +2067,7 @@ async function load(background = false) {
       !restored &&
       snapshot &&
       sameScope &&
-      !['pedidos', 'carteira'].includes(state.view) &&
+      !['pedidos', 'carteira', 'pagar'].includes(state.view) &&
       !legacyViews.has(state.view) &&
       state.view !== 'dashboard'
     ) {

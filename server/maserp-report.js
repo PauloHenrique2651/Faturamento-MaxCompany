@@ -183,7 +183,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         FROM itensnotafiscalsaida_T
         GROUP BY emp_empresa_IN, not_numero_IN
       )
-      SELECT n.emp_empresa_IN company_code,
+      SELECT n.emp_empresa_IN company_code, CONVERT(varchar(10),n.not_dataemissao_DT,23) date,
         COUNT_BIG(*) invoice_count,
         SUM(CONVERT(decimal(18,2), ISNULL(n.not_totalgeral_MN,0))) gross_value,
         SUM(CONVERT(decimal(18,2), ISNULL(r.returned_value,0))) returned_value
@@ -196,7 +196,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         AND ISNULL(n.not_cancelada_BT,0)=0
         AND ISNULL(n.not_complementar_BT,0)=0
         AND ISNULL(n.not_denegada_BT,0)=0
-      GROUP BY n.emp_empresa_IN
+      GROUP BY n.emp_empresa_IN, CONVERT(varchar(10),n.not_dataemissao_DT,23)
 
       ;WITH commercial_lines AS (
         SELECT p.emp_empresa_IN company_code,
@@ -282,7 +282,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       SELECT p.emp_empresa_IN company_code,p.ped_pedido_IN order_number,p.ped_serie_CH order_series,
         i.ite_sequencia_IN sequence,i.pro_produto_IN code,product.pro_descricao name,i.ite_unidade_CH unit,
         ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0) quantity,
-        ISNULL(i.ite_preco_MN,0) unit_price,
+        ISNULL(i.ite_preco_MN,0) unit_price, ISNULL(i.ite_produtosemgiro_BT,0) without_rotation,
         CONVERT(decimal(18,2),(ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0))*ISNULL(i.ite_preco_MN,0)) value
       FROM pedido_T p JOIN itenspedido_T i ON i.emp_empresa_IN=p.emp_empresa_IN AND i.ped_pedido_IN=p.ped_pedido_IN AND i.ped_serie_CH=p.ped_serie_CH
       LEFT JOIN produto product ON product.pro_codigo=i.pro_produto_IN
@@ -295,6 +295,19 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       FROM pedido_T p JOIN empresa_T company ON company.emp_empresa_IN=p.emp_empresa_IN
       LEFT JOIN clientejuridica customer ON customer.cli_codigo=p.cli_cliente_IN
       WHERE p.emp_empresa_IN IN (1,3,5,6) AND p.ped_datainclusao_DT>=@startDate AND p.ped_datainclusao_DT<@endExclusive
+
+      SELECT p.emp_empresa_IN company_code,p.ped_pedido_IN order_number,p.ped_serie_CH order_series,
+        i.ite_sequencia_IN sequence,CONVERT(varchar(10),n.not_dataemissao_DT,23) date,
+        SUM(l.inp_quantidadeitempedido_NM) quantity,MAX(ni.ite_customediobrutoporitem_MN) cost
+      FROM pedido_T p JOIN itenspedido_T i ON i.emp_empresa_IN=p.emp_empresa_IN AND i.ped_pedido_IN=p.ped_pedido_IN AND i.ped_serie_CH=p.ped_serie_CH
+      JOIN itensnotafiscalsaida_T_itenspedidovenda_T l ON l.inp_empresapedido_IN=p.emp_empresa_IN AND l.inp_pedido_IN=p.ped_pedido_IN AND l.inp_seriepedido_CH=p.ped_serie_CH AND l.inp_sequenciapedido_IN=i.ite_sequencia_IN
+      JOIN notafiscalsaida_T n ON n.emp_empresa_IN=l.inp_empresanotafiscal_IN AND n.not_numero_IN=l.inp_notafiscalsaida_IN
+      JOIN itensnotafiscalsaida_T ni ON ni.emp_empresa_IN=n.emp_empresa_IN AND ni.not_numero_IN=n.not_numero_IN AND ni.ite_sequencia_IN=l.inp_sequencianotafiscalsaida_IN
+      WHERE p.emp_empresa_IN IN (1,3,5,6) AND p.ped_datainclusao_DT>=@startDate AND p.ped_datainclusao_DT<@endExclusive
+        AND n.emp_empresa_IN=p.emp_empresa_IN AND n.not_dataemissao_DT<@endExclusive
+        AND ISNULL(n.not_cancelada_BT,0)=0 AND ISNULL(n.not_denegada_BT,0)=0 AND ISNULL(n.not_complementar_BT,0)=0
+        AND ISNULL(p.ped_excluido_BT,0)=0 AND ISNULL(i.ite_cancelado_BT,0)=0
+      GROUP BY p.emp_empresa_IN,p.ped_pedido_IN,p.ped_serie_CH,i.ite_sequencia_IN,CONVERT(varchar(10),n.not_dataemissao_DT,23)
     `);
     const profitabilityRequest = pool.request();
     profitabilityRequest.input('empresa_VC', sql.VarChar(sql.MAX), companyCodes.join(','));
@@ -420,6 +433,114 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       current.expenses += Number(row.not_totaloutrasdespesas_MN || 0);
       sellerProfitability.set(key, current);
     }
+    const dateOf = (v) =>
+      v instanceof Date ? v.toISOString().slice(0, 10) : String(v || '').slice(0, 10);
+    const index = (rows) => {
+      const map = new Map();
+      for (const row of rows) {
+        const id = orderId(row.company_code, row.order_number, row.order_series);
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push(row);
+      }
+      return map;
+    };
+    const notesByOrder = index(result.recordsets[2] || []),
+      itemsByOrder = index(result.recordsets[3] || []),
+      headersByOrder = index(result.recordsets[4] || []),
+      billingByOrder = index(result.recordsets[5] || []);
+    const forOrder = (map, row) =>
+      map.get(orderId(row.company_code, row.order_number, row.order_series)) || [];
+    const timelineByOrder = new Map();
+    for (const row of orderRows) {
+      const items = forOrder(itemsByOrder, row),
+        links = forOrder(billingByOrder, row);
+      const dates = [...new Set(links.map((l) => l.date))].sort();
+      const itemLinks = new Map();
+      for (const l of links) {
+        if (!itemLinks.has(l.sequence)) itemLinks.set(l.sequence, []);
+        itemLinks.get(l.sequence).push(l);
+      }
+      const timeline = dates.map((date) => {
+        const t = {
+          date,
+          billed: 0,
+          billedCostCoverage: 0,
+          billedCost: 0,
+          billedWithRotation: 0,
+          billedWithoutRotation: 0
+        };
+        for (const i of items) {
+          const selected = (itemLinks.get(i.sequence) || []).filter((l) => l.date <= date);
+          const quantity = Math.min(
+            Number(i.quantity),
+            selected.reduce((n, l) => n + Number(l.quantity || 0), 0)
+          );
+          const costs = selected.filter((l) => l.cost != null).map((l) => Number(l.cost));
+          const cost = costs.length ? Math.max(...costs) : null;
+          const value = Math.round((quantity * Number(i.unit_price) + Number.EPSILON) * 100) / 100;
+          t.billed += value;
+          if (selected.length)
+            t[i.without_rotation ? 'billedWithoutRotation' : 'billedWithRotation'] += value;
+          if (cost != null) {
+            t.billedCostCoverage += value;
+            t.billedCost += Math.round((quantity * cost + Number.EPSILON) * 100) / 100;
+          }
+        }
+        t.cohortBilled = t.billed;
+        t.pending = Number(row.sales_value) - t.billed;
+        t.pendingOrders = t.pending > 0.005 ? 1 : 0;
+        return t;
+      });
+      timelineByOrder.set(orderId(row.company_code, row.order_number, row.order_series), timeline);
+    }
+    const groupFacts = (rows, keys) => {
+      const map = new Map();
+      for (const r of rows) {
+        const key = keys.map((k) => r[k]).join('|');
+        const t = map.get(key) || Object.fromEntries(keys.map((k) => [k, r[k]]));
+        for (const [k, v] of Object.entries(r))
+          if (!keys.includes(k) && typeof v === 'number') t[k] = (t[k] || 0) + v;
+        map.set(key, t);
+      }
+      return [...map.values()];
+    };
+    const companyFacts = invoiceRows.map((r) => ({
+      companyCode: Number(r.company_code),
+      date: r.date,
+      count: Number(r.invoice_count),
+      gross: Number(r.gross_value || 0),
+      returned: Number(r.returned_value || 0)
+    }));
+    const profitFacts = groupFacts(
+      profitabilityInvoices.map((r) => ({
+        companyCode: Number(r.emp_empresa_IN),
+        date: dateOf(r.not_dataemissao_DT),
+        count: 1,
+        gross: Number(r.not_total_MN || 0) + Number(r.not_valordevolvido_MN || 0),
+        net: Number(r.not_total_MN || 0),
+        cost: Number(r.not_totalcusto_MN || 0),
+        profit: Number(r.not_lucro_MN || 0),
+        returned: Number(r.not_valordevolvido_MN || 0),
+        expenses: Number(r.not_totaloutrasdespesas_MN || 0)
+      })),
+      ['companyCode', 'date']
+    );
+    const sellerFacts = groupFacts(
+      sellerProfitabilityInvoices.map((r) => ({
+        companyCode: Number(r.emp_empresa_IN),
+        date: dateOf(r.not_dataemissao_DT),
+        sellerCode: Number(r.ven_codigo || 0),
+        sellerName: String(r.ven_nome || 'Não identificado').trim(),
+        internal: Boolean(r.interno_BT),
+        count: 1,
+        sales: Number(r.not_total_MN || 0),
+        cost: Number(r.not_totalcusto_MN || 0),
+        profit: Number(r.not_lucro_MN || 0),
+        returned: Number(r.not_valordevolvido_MN || 0),
+        expenses: Number(r.not_totaloutrasdespesas_MN || 0)
+      })),
+      ['companyCode', 'date', 'sellerCode', 'sellerName', 'internal']
+    );
     return {
       available: true,
       source: 'MASERP · vendas, faturamento, notas emitidas e lucratividade',
@@ -432,12 +553,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         number: Number(row.order_number),
         series: String(row.order_series).trim(),
         ...(() => {
-          const h =
-            (result.recordsets[4] || []).find(
-              (h) =>
-                orderId(h.company_code, h.order_number, h.order_series) ===
-                orderId(row.company_code, row.order_number, row.order_series)
-            ) || {};
+          const h = forOrder(headersByOrder, row)[0] || {};
           return {
             companyName: String(h.company_name || '').trim(),
             companyCnpj: String(h.company_cnpj || '').trim(),
@@ -452,40 +568,44 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         total: Number(row.sales_value || 0),
         billed: Number(row.billed_value || 0),
         pending: Number(row.pending_value || 0),
-        invoices: (result.recordsets[2] || [])
-          .filter(
-            (n) =>
-              orderId(n.company_code, n.order_number, n.order_series) ===
-              orderId(row.company_code, row.order_number, row.order_series)
-          )
-          .map((n) => ({
-            number: n.number,
-            series: n.series,
-            key: String(n.access_key || '').trim(),
-            date: n.issued_on
-          })),
-        items: (result.recordsets[3] || [])
-          .filter(
-            (i) =>
-              orderId(i.company_code, i.order_number, i.order_series) ===
-              orderId(row.company_code, row.order_number, row.order_series)
-          )
-          .map((i) => ({
-            sequence: Number(i.sequence),
-            code: Number(i.code),
-            name: String(i.name || '').trim(),
-            unit: String(i.unit || '').trim(),
-            quantity: Number(i.quantity),
-            unitPrice: Number(i.unit_price),
-            value: Number(i.value)
-          }))
+        billingTimeline: timelineByOrder.get(
+          orderId(row.company_code, row.order_number, row.order_series)
+        ),
+        invoices: forOrder(notesByOrder, row).map((n) => ({
+          number: n.number,
+          series: n.series,
+          key: String(n.access_key || '').trim(),
+          date: n.issued_on
+        })),
+        items: forOrder(itemsByOrder, row).map((i) => ({
+          sequence: Number(i.sequence),
+          code: Number(i.code),
+          name: String(i.name || '').trim(),
+          unit: String(i.unit || '').trim(),
+          quantity: Number(i.quantity),
+          unitPrice: Number(i.unit_price),
+          value: Number(i.value)
+        }))
       })),
-      companies: invoiceRows.map((row) => ({
-        companyCode: Number(row.company_code),
-        count: Number(row.invoice_count),
-        gross: Number(row.gross_value || 0),
-        returned: Number(row.returned_value || 0)
-      })),
+      periodFacts: {
+        companies: companyFacts,
+        profitability: profitFacts,
+        sellerProfitability: sellerFacts,
+        commercial: orderRows.map((r) => ({
+          companyCode: Number(r.company_code),
+          date: r.created_on,
+          orders: 1,
+          sales: Number(r.sales_value || 0),
+          salesCost: Number(r.sales_cost || 0),
+          salesWithRotation: Number(r.sales_with_rotation || 0),
+          salesWithoutRotation: Number(r.sales_without_rotation || 0),
+          timeline: timelineByOrder.get(orderId(r.company_code, r.order_number, r.order_series))
+        }))
+      },
+      companies: groupFacts(
+        companyFacts.map(({ date, ...r }) => r),
+        ['companyCode']
+      ),
       commercial: commercialRows.map((row) => ({
         companyCode: Number(row.company_code),
         orders: Number(row.order_count),

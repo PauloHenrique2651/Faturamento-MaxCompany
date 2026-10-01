@@ -1,3 +1,4 @@
+import { summarySynchronization } from '../../public/lib/maserp-periods.js';
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { fiscalBreakdown, scopedDocuments, searchDocuments } from '../lib/cloud-fiscal.js';
@@ -13,6 +14,7 @@ import { salesTargetsRoute } from '../../server/sales-targets.js';
 import { sellerCommissionsRoute } from '../../server/seller-commissions.js';
 import { equivalencesRoute } from '../../server/product-equivalences.js';
 import { walletRoute, validWalletStoragePath } from '../../server/wallet-route.js';
+import { payablesRoute, validPayablesStoragePath } from '../../server/payables-route.js';
 import { ordersRoute, validOrderStoragePath } from '../../server/order-route.js';
 
 const scrypt = promisify(scryptCallback);
@@ -69,7 +71,8 @@ async function downloadStorageObject(path) {
   if (
     !/^\d+\/(?:outgoing|incoming)\/\d{44}\.(?:xml|pdf|html)$/.test(String(path || '')) &&
     !validOrderStoragePath(path) &&
-    !validWalletStoragePath(path)
+    !validWalletStoragePath(path) &&
+    !validPayablesStoragePath(path)
   )
     throw new Error('Caminho de documento fiscal inválido.');
   const base = env('SUPABASE_URL').replace(/\/$/, '');
@@ -571,6 +574,7 @@ async function syncOverview() {
       maserpSales: successful?.details?.maserpSales || null,
       maserpReports: successful?.details?.maserpReports || {},
       wallet: successful?.details?.wallet || null,
+      payables: successful?.details?.payables || null,
       pendingArtifacts: successful?.details?.pendingArtifacts ?? null
     };
   } catch {
@@ -681,7 +685,7 @@ async function handle(req, res) {
   const crmRoute = url.searchParams.get('crmRoute');
   const path =
     url.pathname === '/api/executive' &&
-    ['targets', 'equivalences', 'commissions', 'orders', 'wallet'].includes(crmRoute)
+    ['targets', 'equivalences', 'commissions', 'orders', 'wallet', 'payables'].includes(crmRoute)
       ? `/api/commercial/${crmRoute}`
       : url.pathname;
   if (path === '/api/auth/login' && req.method === 'POST') {
@@ -757,6 +761,15 @@ async function handle(req, res) {
     )
   )
     return json(res, 403, { error: 'Acesso restrito ao fiscal.' });
+  if (path === '/api/commercial/payables') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
+    const result = await payablesRoute({
+      user,
+      metadata: (await syncOverview()).payables,
+      download: downloadStorageObject
+    });
+    return json(res, result.status, result.body);
+  }
   if (path === '/api/commercial/wallet') {
     if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
     const result = await walletRoute({
@@ -806,12 +819,15 @@ async function handle(req, res) {
       synchronization:
         user.role === 'fiscal'
           ? { ...(await syncOverview()), maserpSales: null, maserpReports: {} }
-          : await syncOverview()
+          : summarySynchronization(await syncOverview(), { inicio: cloud.inicio, fim: cloud.fim })
     });
   }
   if (path === '/api/falco/entradas') {
     const cloud = await cloudDocuments('incoming', url);
-    const synchronization = await syncOverview();
+    const synchronization = summarySynchronization(await syncOverview(), {
+      inicio: cloud.inicio,
+      fim: cloud.fim
+    });
     return json(res, 200, {
       ...baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'incoming'),
       synchronization,

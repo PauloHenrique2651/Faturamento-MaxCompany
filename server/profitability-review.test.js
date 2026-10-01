@@ -40,3 +40,16 @@ test('relatórios históricos revisam os últimos 12 meses com limite de cadênc
   ]);
   assert.equal(historicalReportPeriod({}, '2026-09-01', '2026-10-01', now), null);
 });
+
+test('Total Geral and Total final of the Falco report show expenses exactly once', () => {
+  const c = profitabilityComposition(
+    [{ net: 3404195.86, returned: 724363.94, expenses: 250, cost: 2218781.4, profit: 1185414.46 }],
+    [{ value: 22753.91 }]
+  );
+  assert.equal(c.notesSubtotal, 4128559.8);
+  assert.equal(c.totalWithExpenses, 3404445.86);
+  assert.equal(c.sales, 4128809.8);
+  assert.equal(c.profit, 1185414.46);
+  assert.equal(c.reconciled, true);
+  assert.ok(Math.abs(c.totalWithExpenses - c.expenses - c.cost - c.profit) < 0.001);
+});

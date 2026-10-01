@@ -1,3 +1,4 @@
+import { summarySynchronization } from '../public/lib/maserp-periods.js';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
@@ -22,6 +23,7 @@ import {
 } from './supabase-sync.js';
 import { crmCloudRequest, crmOrderDownload } from './crm-store.js';
 import { walletRoute } from './wallet-route.js';
+import { payablesRoute } from './payables-route.js';
 import { ordersRoute } from './order-route.js';
 import { salesTargetsRoute } from './sales-targets.js';
 import { sellerCommissionsRoute } from './seller-commissions.js';
@@ -102,7 +104,10 @@ async function financializeSummary(summary, direction, params) {
     ...summary,
     ...calculated,
     source: summary.source || 'Falco',
-    synchronization: await cached('published-reports', readPublishedMaserpReports),
+    synchronization: summarySynchronization(
+      await cached('published-reports', readPublishedMaserpReports),
+      summary.period
+    ),
     sourcesAvailable: summary.sourcesAvailable,
     sourcesTotal: summary.sourcesTotal,
     sync: summary.sync,
@@ -142,6 +147,15 @@ async function cached(key, loader) {
 }
 
 async function api(req, res, url, user) {
+  if (url.pathname === '/api/commercial/payables') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
+    const result = await payablesRoute({
+      user,
+      metadata: (await readPublishedMaserpReports()).payables,
+      download: crmOrderDownload
+    });
+    return json(res, result.status, result.body);
+  }
   if (url.pathname === '/api/commercial/wallet') {
     if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
     const result = await walletRoute({

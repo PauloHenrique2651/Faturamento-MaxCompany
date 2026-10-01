@@ -146,3 +146,12 @@ test('both Vercel project roots route order requests to the authenticated API', 
     );
   }
 });
+
+test('orders can be narrowed by seller and sorted by actual pending amount', () => {
+  const others = [
+    ...orders,
+    { ...orders[0], id: '1/102/A', seller: 'Outro', pending: 90, total: 130 }
+  ];
+  assert.equal(selectOrders(others, { seller: 'Tiago' }).length, 2);
+  assert.equal(selectOrders(others, { sort: 'pending' })[0].pending, 90);
+});

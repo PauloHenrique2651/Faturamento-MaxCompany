@@ -13,6 +13,8 @@ export function profitabilityComposition(rows = [], freights = []) {
   const difference = base - cost - falcoProfit;
   return {
     sales,
+    notesSubtotal: base + returned,
+    totalWithExpenses: base + expenses,
     returned,
     expenses,
     base,

@@ -2800,6 +2800,9 @@ a.commercial-card:focus-visible {
 .wallet-day strong {
   text-align: right;
 }
+body[data-view='pagar'] .role-select,
+body[data-view='pagar'] label:has(#cfop-filter),
+body[data-view='pagar'] label:has(#financial-effect),
 body[data-view='carteira'] .role-select,
 body[data-view='carteira'] label:has(#cfop-filter),
 body[data-view='carteira'] label:has(#financial-effect) {
@@ -2826,4 +2829,116 @@ body[data-view='pedidos'] .role-select,
 body[data-view='pedidos'] label:has(#cfop-filter),
 body[data-view='pedidos'] label:has(#financial-effect) {
   display: none;
+}
+
+/* Refino da interface aprovada: mesma identidade e tipografia. */
+.order-totals strong,
+.order-entry-amount strong,
+.wallet-day strong {
+  overflow-wrap: normal;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.order-totals > div {
+  min-width: 0;
+}
+.order-panel .toolbar,
+.wallet-panel .toolbar {
+  align-items: flex-end;
+}
+.order-panel .toolbar label,
+.wallet-panel .toolbar label {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  font-size: 12px;
+}
+.order-panel .toolbar .search-field,
+.wallet-panel .toolbar .search-field {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  flex: 1 1 240px;
+}
+.order-panel .search-field input,
+.wallet-panel .search-field input {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: white;
+}
+.order-panel .toolbar input,
+.wallet-panel .toolbar input,
+.order-panel .toolbar select,
+.wallet-panel .toolbar select,
+.order-panel .toolbar button,
+.wallet-panel .toolbar button,
+.pagination .button,
+.order-invoices .button {
+  min-height: 44px;
+}
+.order-panel .toolbar select,
+.wallet-panel .toolbar select {
+  max-width: 280px;
+}
+.order-panel .pagination,
+.wallet-panel .pagination {
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.order-totals small {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+@media (min-width: 601px) and (max-width: 1250px) {
+  .order-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 420px) {
+  .order-totals {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .order-panel .toolbar label,
+  .wallet-panel .toolbar label {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .order-panel .toolbar select,
+  .wallet-panel .toolbar select {
+    max-width: 100%;
+    width: 100%;
+  }
+  .order-panel .toolbar input,
+  .wallet-panel .toolbar input {
+    font-size: 16px;
+  }
+}
+
+.cash-flow-totals {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.cash-flow-panel {
+  margin-bottom: 24px;
+}
+.cash-flow-panel summary {
+  cursor: pointer;
+  padding: 12px 0;
+  min-height: 44px;
+}
+.cash-flow-panel .table-wrap {
+  overflow-x: auto;
+}
+.cash-flow-panel table td:not(:first-child) {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 760px) {
+  .cash-flow-totals {
+    grid-template-columns: 1fr;
+  }
 }

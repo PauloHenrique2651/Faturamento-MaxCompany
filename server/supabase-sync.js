@@ -1,8 +1,10 @@
 import { historicalPage, historicalReportPeriod } from './reconciliation-plan.js';
+import { readMaserpPayables } from './maserp-payables.js';
+import { publishPayables } from './payables-route.js';
 import { readMaserpWallet } from './maserp-wallet.js';
 import { publishWallet } from './wallet-route.js';
 import { publishOrderCatalogs } from './order-files.js';
-import { monthlyReportPeriods } from '../public/lib/maserp-periods.js';
+import { monthlyReportPeriods, deriveMaserpReport } from '../public/lib/maserp-periods.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -771,16 +773,16 @@ export async function syncSupabaseFromFalco() {
       })
     });
     runId = created?.[0]?.id || null;
-    const [outgoing, incoming, sefaz, maserpSales, invoiceStates, productReferences] =
+    const [outgoing, incoming, sefaz, annualReport, invoiceStates, productReferences] =
       await Promise.all([
         readNfeSummary(start, end),
         readIncomingSummary(start, end),
         readIncomingSyncStatus(),
-        readMaserpSalesSnapshot(`${end.slice(0, 7)}-01`, end),
+        readMaserpSalesSnapshot(`${Number(end.slice(0, 4)) - 1}-01-01`, end),
         readMaserpInvoiceStates(settings.startDate, end),
         readMaserpProductReferences(shiftDays(`${end.slice(0, 7)}-01`, -365), end)
       ]);
-    if (!maserpSales.available)
+    if (!annualReport.available)
       throw new Error('Relatórios MASERP indisponíveis; preservado último conjunto confirmado');
     if (state.reportCalendarVersion !== 'sql-calendar-utc-v1') {
       // Retratos anteriores podem ter incluído o dia seguinte ao converter hora local.
@@ -790,14 +792,25 @@ export async function syncSupabaseFromFalco() {
       state.reportCalendarVersion = 'sql-calendar-utc-v1';
     }
     state.maserpReports ||= {};
+    state.maserpReports[`${end.slice(0, 4)}-year`] = annualReport;
+    const maserpSales = deriveMaserpReport(annualReport, {
+      inicio: `${end.slice(0, 7)}-01`,
+      fim: end
+    });
     state.maserpReports[end.slice(0, 7)] = maserpSales;
     const [previousStart, previousEnd] = monthlyReportPeriods(end)[1];
-    const previous = await readMaserpSalesSnapshot(previousStart, previousEnd);
+    const previous =
+      deriveMaserpReport(annualReport, { inicio: previousStart, fim: previousEnd }) ||
+      (await readMaserpSalesSnapshot(previousStart, previousEnd));
     if (previous.available) state.maserpReports[previousStart.slice(0, 7)] = previous;
     const historicalPeriod = historicalReportPeriod(state, settings.startDate, end);
     let historicalReport = null;
     if (historicalPeriod) {
-      const snapshot = await readMaserpSalesSnapshot(...historicalPeriod);
+      const snapshot =
+        deriveMaserpReport(annualReport, {
+          inicio: historicalPeriod[0],
+          fim: historicalPeriod[1]
+        }) || (await readMaserpSalesSnapshot(...historicalPeriod));
       historicalReport = {
         start: historicalPeriod[0],
         end: historicalPeriod[1],
@@ -811,10 +824,17 @@ export async function syncSupabaseFromFalco() {
       if (snapshot.available) state.maserpReports[snapshot.startDate.slice(0, 7)] = snapshot;
     }
 
+    const previousYear = String(Number(end.slice(0, 4)) - 1),
+      priorKey = previousYear + '-year';
+    state.maserpReports[priorKey] = deriveMaserpReport(annualReport, {
+      inicio: previousYear + '-01-01',
+      fim: previousYear + '-12-31'
+    });
+
     state.maserpReports = Object.fromEntries(
       Object.entries(state.maserpReports)
         .sort(([a], [b]) => b.localeCompare(a))
-        .slice(0, 12)
+        .slice(0, 26)
     );
     if (!invoiceStates.available)
       throw new Error('Revisão MASERP indisponível; preservado último conjunto confirmado');
@@ -941,6 +961,7 @@ export async function syncSupabaseFromFalco() {
     );
     await saveState(state);
     const wallet = await publishWallet(await readMaserpWallet(), state, uploadObject);
+    const payables = await publishPayables(await readMaserpPayables(), state, uploadObject);
     const orderPublication = await publishOrderCatalogs(
       Object.values(state.maserpReports),
       state,
@@ -949,6 +970,7 @@ export async function syncSupabaseFromFalco() {
     await saveState(state);
     const details = {
       wallet,
+      payables,
       orderPublication,
       start,
       end,
@@ -985,6 +1007,7 @@ export async function syncSupabaseFromFalco() {
       reportPath + '.tmp',
       JSON.stringify({
         wallet,
+        payables,
         updatedAt: state.lastSuccessAt,
         maserpSales,
         maserpReports: state.maserpReports,
