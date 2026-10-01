@@ -2766,7 +2766,8 @@ setInterval(() => {
     !state.paused &&
     !document.hidden &&
     !document.querySelector('dialog[open]') &&
-    !['INPUT', 'SELECT'].includes(document.activeElement.tagName) &&
+    (!['INPUT', 'SELECT'].includes(document.activeElement.tagName) ||
+      ['carteira', 'pagar'].includes(state.view)) &&
     !['comissoes', 'usuarios', 'mostrador', 'metas'].includes(state.view)
   )
     load(true);
