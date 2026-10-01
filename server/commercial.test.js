@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   commercialPerformance,
   displayPeriod,
+  selectedDisplayPeriod,
   proratedTarget
 } from '../public/lib/commercial-performance.js';
 import { purchaseSuggestions, reconcilePurchases } from '../public/lib/purchase-match.js';
@@ -282,4 +283,13 @@ test('cadastro fornecedor MASERP exige CNPJ, código, NCM, unidade e identidade 
   assert.equal(apply([{ ...mapping, supplierId: '00000000000000' }]), undefined);
   assert.equal(apply([{ ...mapping, unit: 'CX' }]), undefined);
   assert.equal(apply([mapping, { ...mapping, productId: 88 }]), undefined);
+});
+
+test('mostrador preserva o período do dashboard na virada do mês', () => {
+  const period = selectedDisplayPeriod('month', '2026-10-01', '2026-09-01', '2026-09-30');
+  assert.equal(period.start, '2026-09-01');
+  assert.equal(period.end, '2026-09-30');
+  assert.equal(period.horizon, '2026-09-30');
+  assert.equal(period.label, '01/09/2026 a 30/09/2026');
+  assert.equal(selectedDisplayPeriod('month', '2026-10-01').label, 'Mês atual');
 });

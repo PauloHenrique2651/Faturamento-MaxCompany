@@ -2112,8 +2112,10 @@ function route() {
   state.params = new URLSearchParams(query);
   if (state.view === 'mostrador') {
     const period = displayPeriod(state.params.get('period') || 'month', today());
-    state.params.set('inicio', period.start);
-    state.params.set('fim', period.end);
+    if (!state.params.has('inicio') || !state.params.has('fim')) {
+      state.params.set('inicio', period.start);
+      state.params.set('fim', period.end);
+    }
     state.mostradorSignature = '';
   }
   if (!state.params.has('fim')) state.params.set('fim', today());

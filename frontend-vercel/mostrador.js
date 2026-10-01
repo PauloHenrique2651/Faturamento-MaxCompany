@@ -1,5 +1,5 @@
 import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
-import { commercialPerformance, displayPeriod } from './lib/commercial-performance.js';
+import { commercialPerformance, selectedDisplayPeriod } from './lib/commercial-performance.js';
 import {
   escapeHtml as esc,
   formatMoney as money,
@@ -262,7 +262,7 @@ function conciseRanking(rows, params, view, key) {
 export function renderMostrador(outgoing, incoming, targets, params, options = {}) {
   const today = todayInBrazil();
   const periodKey = params.get('period') || 'month';
-  const period = displayPeriod(periodKey, today);
+  const period = selectedDisplayPeriod(periodKey, today, params.get('inicio'), params.get('fim'));
   const selectedCompany = params.get('empresa') || '';
   const company = companies.find((row) => row.id === selectedCompany) || companies[0];
   const result = commercialPerformance(

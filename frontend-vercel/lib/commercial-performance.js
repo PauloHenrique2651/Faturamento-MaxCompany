@@ -65,6 +65,22 @@ export function displayPeriod(period, today) {
   return options[period] || options.month;
 }
 
+export function selectedDisplayPeriod(key, today, start, end) {
+  const current = displayPeriod(key, today);
+  if (!start || !end) return current;
+  const selected = displayPeriod(key, end);
+  return {
+    ...selected,
+    start,
+    end,
+    horizon: selected.start === start ? selected.horizon : end,
+    label:
+      current.start === start && current.end === end
+        ? current.label
+        : start.split('-').reverse().join('/') + ' a ' + end.split('-').reverse().join('/')
+  };
+}
+
 function covers(target, day) {
   const start = target.period_start;
   if (day < start) return false;
