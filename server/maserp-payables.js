@@ -13,7 +13,7 @@ export async function readMaserpPayables() {
         ISNULL(c.par_desconto_MN,0) discount,ISNULL(c.par_juros_MN,0)+ISNULL(c.par_mora_MN,0) charges,
         ISNULL(c.par_bloqueado_BT,0) blocked,ISNULL(c.par_bloqueadopeladevolucao_BT,0) returnBlocked,
         c.par_chave_xml_notafiscalentradaxml_VC accessKey,
-        (SELECT DISTINCT n.not_numero_IN invoiceNumber,n.not_serie_IN invoiceSeries,n.not_chavenotafiscaleletronica_VC accessKey,
+        (SELECT DISTINCT n.not_numero_IN invoiceNumber,n.not_serie_IN invoiceSeriesCode,n.not_chavenotafiscaleletronica_VC accessKey,
             CONVERT(varchar(10),n.not_dataemissao_DT,23) issuedOn,
             part.nfp_nome_VC supplier,part.nfp_cnpj_VC supplierTaxId,part.nfp_fornecedor_IN supplierCode
           FROM notafiscalentradadocumentosapagar_T l JOIN notafiscalentrada_T n
@@ -37,7 +37,12 @@ export async function readMaserpPayables() {
       discount: Number(r.discount),
       charges: Number(r.charges),
       blocked: Boolean(r.blocked || r.returnBlocked),
-      invoices: JSON.parse(r.invoices || '[]'),
+      invoices: JSON.parse(r.invoices || '[]').map((n) => ({
+        ...n,
+        invoiceSeries: /^\d{44}$/.test(n.accessKey || '')
+          ? String(Number(n.accessKey.slice(22, 25)))
+          : null
+      })),
       source: 'MASERP'
     }));
     if (new Set(rows.map((r) => r.id)).size !== rows.length)
