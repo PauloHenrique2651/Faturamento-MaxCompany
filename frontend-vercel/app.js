@@ -1601,17 +1601,17 @@ function maserpReportPanel(data) {
     ${panelHead('Lucratividade · relatório Falco', 'Custo das vendas e resultado na mesma base do relatório')}
     <div class="profit-equation"><div><span>Base após devoluções e despesas Falco</span><strong>${money(metrics.profitabilityNet)}</strong></div><div><span>− Custo das vendas no Falco</span><strong>${money(metrics.profitabilityCost)}</strong></div><div class="profit"><span>= Lucro no Falco</span><strong>${money(metrics.profitabilityGrossProfit)}</strong></div></div>
     <div class="profit-adjustment"><span>Lucro Falco ${money(metrics.profitabilityGrossProfit)} − frete de entrada ${money(metrics.incomingFreightExpense)}</span><strong>${money(metrics.profitabilityProfit)}</strong><small>Lucro após frete de entrada · ${num(metrics.profitabilityMarkup)}% sobre o custo</small></div>
-    <details class="profit-criteria"><summary>Como a conta fecha</summary><p>Base do relatório: ${money(metrics.profitabilityGross)} − ${money(metrics.profitabilityReturned)} devolvidos = ${money(metrics.profitabilityNet)}. Outras despesas Falco de ${money(metrics.falcoExpenses)} já estão consideradas nessa base e não são descontadas novamente. Compras do período não substituem o custo das vendas. O resultado mostrado não representa lucro contábil.</p></details>
+    <details class="profit-criteria" ${state.profitCriteriaOpen ? 'open' : ''}><summary>Como a conta fecha</summary><p>Base do relatório: ${money(metrics.profitabilityGross)} − ${money(metrics.profitabilityReturned)} devolvidos = ${money(metrics.profitabilityNet)}. Outras despesas Falco de ${money(metrics.falcoExpenses)} já estão consideradas nessa base e não são descontadas novamente. Compras do período não substituem o custo das vendas. O resultado mostrado não representa lucro contábil.</p></details>
   </article>`
     : '';
   return `<section class="maserp-report-panel" aria-label="Movimento fiscal e comercial do Falco">
   <div class="data-pipelines"><div class="pipeline-state ${sync?.fresh ? 'ok' : 'warn'}"><span>SAÍDAS · FALCO/MASERP</span><strong>${sync?.fresh ? 'Atualização ativa' : 'Aguardando coletor'}</strong><small>Concluída em ${esc(updated)}</small></div><div class="pipeline-state ${sefazErrors ? 'warn' : 'ok'}"><span>ENTRADAS · SEFAZ</span><strong>${esc(sefazHeadline)}</strong><small>${esc(sefazDetail)}</small></div></div>
   <article class="panel fiscal-overview-panel">${panelHead('Notas fiscais · emitidas, devolvidas e canceladas', `${rangeNote} · ${metrics.label}`)}
-    <div class="fiscal-overview-grid"><a class="fiscal-overview-card issued" href="${esc(href('emitidas'))}"><span>NF-e emitidas</span><strong>${money(metrics.gross)}</strong><small>${num(metrics.invoices)} notas autorizadas</small></a><a class="fiscal-overview-card returned" href="${esc(href('devolucoes'))}"><span>Vendas devolvidas</span><strong>${money(metrics.returned)}</strong><small>Devoluções registradas nas vendas de origem</small></a><a class="fiscal-overview-card canceled" href="${esc(href('canceladas'))}"><span>NF-e canceladas</span><strong>${money(data.canceledValue || 0)}</strong><small>${num(data.canceledCount || 0)} notas · fora das autorizadas</small></a><div class="fiscal-overview-card balance"><span>Saldo fiscal após devoluções</span><strong>${money(metrics.net)}</strong><small>Emitidas menos devolvidas · antes de despesas</small></div></div>
+    <div class="fiscal-overview-grid"><a class="fiscal-overview-card issued" href="${esc(href('emitidas'))}"><span>NF-e de venda emitidas</span><strong>${money(metrics.gross)}</strong><small>${num(metrics.invoices)} notas autorizadas</small></a><a class="fiscal-overview-card returned" href="${esc(href('devolucoes'))}"><span>Vendas devolvidas</span><strong>${money(metrics.returned)}</strong><small>Devoluções registradas nas vendas de origem</small></a><a class="fiscal-overview-card canceled" href="${esc(href('canceladas'))}"><span>NF-e canceladas</span><strong>${money(data.canceledValue || 0)}</strong><small>${num(data.canceledCount || 0)} notas · todas as operações · fora das autorizadas</small></a><div class="fiscal-overview-card balance"><span>Saldo fiscal após devoluções</span><strong>${money(metrics.net)}</strong><small>Emitidas menos devolvidas · antes de despesas</small></div></div>
   </article>
   <article class="panel commercial-overview-panel">${panelHead('Vendas e faturamento · relatório comercial', 'Pedidos criados no período · valores de venda dos itens do pedido')}
     <div class="commercial-overview"><div class="commercial-card"><span>Vendas em pedidos</span><strong>${money(metrics.sales)}</strong><small>${num(metrics.orders)} pedidos · faturados e não faturados</small></div><a class="commercial-card orders" href="${esc(href('faturamento'))}"><span>Pedidos a faturar</span><strong>${money(metrics.pending)}</strong><small>${num(metrics.pendingOrders)} pedidos com saldo pendente</small></a><a class="commercial-card billed" href="${esc(href('faturamento'))}"><span>Faturamento comercial</span><strong>${money(metrics.billed)}</strong><small>Itens de pedidos com vínculo a NF-e válida · não é o total fiscal</small></a></div>
-    <details class="company-reconciliation"><summary>Ver valores separados por empresa</summary><div>${invoiceRows
+    <details class="company-reconciliation" ${state.companyReconciliationOpen ? 'open' : ''}><summary>Ver valores separados por empresa</summary><div>${invoiceRows
       .map((row) => {
         const commercial =
           commercialRows.find((item) => item.companyCode === row.companyCode) || {};
@@ -2251,6 +2251,9 @@ document.addEventListener(
   'toggle',
   (event) => {
     if (event.target.matches?.('.fiscal-analysis')) state.fiscalAnalysisOpen = event.target.open;
+    if (event.target.matches?.('.profit-criteria')) state.profitCriteriaOpen = event.target.open;
+    if (event.target.matches?.('.company-reconciliation'))
+      state.companyReconciliationOpen = event.target.open;
   },
   true
 );
