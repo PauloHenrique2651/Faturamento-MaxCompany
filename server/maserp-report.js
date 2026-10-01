@@ -320,9 +320,6 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
       ]);
     const invoiceRows = result.recordsets[0] || [];
     const commercialRows = result.recordsets[1] || [];
-    const issuedCommercial = new Map(
-      invoiceRows.map((row) => [Number(row.company_code), Number(row.gross_value || 0)])
-    );
     const profitabilityInvoices = profitabilityResult.recordsets?.[1] || [];
     const sellerProfitabilityInvoices = sellerProfitabilityResult.recordsets?.[1] || [];
     const profitabilityByCompany = new Map();
@@ -378,6 +375,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
     return {
       available: true,
       source: 'MASERP · vendas, faturamento, notas emitidas e lucratividade',
+      checkedAt: new Date().toISOString(),
       startDate,
       endDate,
       companies: invoiceRows.map((row) => ({
@@ -393,7 +391,7 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         salesCost: Number(row.sales_cost || 0),
         salesWithRotation: Number(row.sales_with_rotation || 0),
         salesWithoutRotation: Number(row.sales_without_rotation || 0),
-        billed: issuedCommercial.get(Number(row.company_code)) || 0,
+        billed: Number(row.billed_value || 0),
         cohortBilled: Number(row.billed_value || 0),
         pending: Number(row.pending_value || 0),
         pendingOrders: Number(row.pending_orders || 0),

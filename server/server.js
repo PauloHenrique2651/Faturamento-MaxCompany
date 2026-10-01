@@ -15,7 +15,11 @@ import {
 } from './sefaz-files.js';
 import { searchQuery } from './nfe-search.js';
 import { renderDanfe } from './danfe.js';
-import { readSupabaseSyncStatus, syncSupabaseFromFalco } from './supabase-sync.js';
+import {
+  readSupabaseSyncStatus,
+  syncSupabaseFromFalco,
+  readPublishedMaserpReports
+} from './supabase-sync.js';
 import { crmCloudRequest } from './crm-store.js';
 import { salesTargetsRoute } from './sales-targets.js';
 import { sellerCommissionsRoute } from './seller-commissions.js';
@@ -96,6 +100,7 @@ async function financializeSummary(summary, direction, params) {
     ...summary,
     ...calculated,
     source: summary.source || 'Falco',
+    synchronization: await cached('published-reports', readPublishedMaserpReports),
     sourcesAvailable: summary.sourcesAvailable,
     sourcesTotal: summary.sourcesTotal,
     sync: summary.sync,

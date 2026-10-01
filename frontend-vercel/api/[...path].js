@@ -563,6 +563,7 @@ async function syncOverview() {
       collecting: runs[0]?.status === 'running',
       sefaz: successful?.details?.sefaz || [],
       maserpSales: successful?.details?.maserpSales || null,
+      maserpReports: successful?.details?.maserpReports || {},
       pendingArtifacts: successful?.details?.pendingArtifacts ?? null
     };
   } catch {
@@ -772,7 +773,7 @@ async function handle(req, res) {
       ...baseSummary(cloud.rows, cloud.inicio, cloud.fim, 'outgoing', scope),
       synchronization:
         user.role === 'fiscal'
-          ? { ...(await syncOverview()), maserpSales: null }
+          ? { ...(await syncOverview()), maserpSales: null, maserpReports: {} }
           : await syncOverview()
     });
   }

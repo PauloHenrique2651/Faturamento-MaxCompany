@@ -1,3 +1,4 @@
+import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
 import { parseRate, projectedCommission } from './commission.js';
 import { fetchJson } from './lib/api-client.js';
 import { createViewSnapshots } from './lib/view-snapshot.js';
@@ -1018,7 +1019,7 @@ function taxDashboard() {
 function freightDashboard() {
   const data = state.nfeData;
   const outgoing = data.documents.filter((row) => row.freight.value > 0);
-  const report = data.synchronization?.maserpSales;
+  const report = selectMaserpReport(data.synchronization, data.period);
   const selectedCompany = Number(state.params.get('empresa') || 0);
   const companyIds = { 1: 1, 3: 2, 5: 3, 6: 4 };
   const incoming =
@@ -1471,7 +1472,7 @@ function incomingDashboard() {
     `<p class="nfe-note">Compra financeira exige XML completo, autorizado e item com CFOP da regra gerencial. Devoluções, remessas e outras entradas ficam fora; resumos sem itens seguem pendentes. XMLs repetidos são deduplicados por empresa e chave. Compra não é faturamento nem custo da mercadoria vendida. ${link('dashboard', 'Ver visão executiva do grupo')}</p>`;
 }
 function maserpMetrics(data) {
-  const report = data?.synchronization?.maserpSales;
+  const report = selectMaserpReport(data?.synchronization, data?.period);
   if (
     !report?.available ||
     data?.period?.inicio !== report.startDate ||
@@ -1517,7 +1518,7 @@ function maserpMetrics(data) {
   const returned = reconciled?.available ? reconciled.value : sum(invoiceRows, 'returned');
   const sales = sum(commercialRows, 'sales');
   const salesCost = sum(commercialRows, 'salesCost');
-  const billed = reconciled?.available ? reconciled.gross : sum(commercialRows, 'billed');
+  const billed = commercialRows.reduce((total, row) => total + commercialBilled(row), 0);
   const billedCost = sum(commercialRows, 'billedCost');
   const billedCostCoverage = sum(commercialRows, 'billedCostCoverage');
   const profitabilityCost = sum(profitabilityRows, 'cost');
@@ -1556,7 +1557,7 @@ function maserpMetrics(data) {
     billedMarkup: billedCost ? ((billedCostCoverage - billedCost) / billedCost) * 100 : 0,
     billedWithRotation: sum(commercialRows, 'billedWithRotation'),
     billedWithoutRotation: sum(commercialRows, 'billedWithoutRotation'),
-    profitabilityAvailable: profitabilityRows.length > 0,
+    profitabilityAvailable: report.available,
     profitabilityGross: sum(profitabilityRows, 'gross'),
     profitabilityNet: sum(profitabilityRows, 'net'),
     profitabilityCost,
@@ -1564,6 +1565,7 @@ function maserpMetrics(data) {
     profitabilityProfit,
     profitabilityReturned: sum(profitabilityRows, 'returned'),
     profitabilityExpenses,
+    falcoExpenses: sum(profitabilityRows, 'expenses'),
     incomingFreightExpense,
     profitabilityMarkup: profitabilityCost ? (profitabilityProfit / profitabilityCost) * 100 : 0
   };
@@ -1594,14 +1596,32 @@ function maserpReportPanel(data) {
     : `Retrato de ${date(report.startDate)} a ${date(report.endDate)}; ajuste o filtro para comparar`;
   const purchases = Number(state.incomingData?.purchaseValue || 0);
   const purchaseCount = Number(state.incomingData?.purchaseCount || 0);
-  return `<section class="maserp-report-panel" aria-label="Movimento fiscal e comercial do Falco"><div class="data-pipelines"><div class="pipeline-state ${sync?.fresh ? 'ok' : 'warn'}"><span>SAÍDAS · FALCO/MASERP</span><strong>${sync?.fresh ? 'Atualização ativa' : 'Aguardando coletor'}</strong><small>Concluída em ${esc(updated)}</small></div><div class="pipeline-state ${sefazErrors ? 'warn' : 'ok'}"><span>ENTRADAS · SEFAZ</span><strong>${esc(sefazHeadline)}</strong><small>${esc(sefazDetail)}</small></div></div><article class="panel fiscal-overview-panel">${panelHead('Notas do período', `${rangeNote} · ${metrics.label}`)}<div class="fiscal-overview-grid"><a class="fiscal-overview-card issued" href="${esc(href('emitidas'))}"><span>NF-e emitidas</span><strong>${money(metrics.gross)}</strong><small>${num(metrics.invoices)} notas autorizadas</small></a><a class="fiscal-overview-card returned" href="${esc(href('devolucoes'))}"><span>NF-e devolvidas</span><strong>${money(metrics.returned)}</strong><small>Valor devolvido registrado no Falco</small></a><a class="fiscal-overview-card canceled" href="${esc(href('canceladas'))}"><span>NF-e canceladas</span><strong>${money(data.canceledValue || 0)}</strong><small>${num(data.canceledCount || 0)} notas canceladas destacadas</small></a><div class="fiscal-overview-card balance"><span>Saldo após devoluções</span><strong>${money(metrics.net)}</strong><small>Emitidas menos devolvidas</small></div></div><div class="commercial-overview"><a class="commercial-card orders" href="${esc(href('faturamento'))}"><span>Pedidos a faturar</span><strong>${money(metrics.pending)}</strong><small>${num(metrics.pendingOrders)} pedidos com saldo pendente no período</small></a><a class="commercial-card billed" href="${esc(href('faturamento'))}"><span>Já faturado</span><strong>${money(metrics.billed)}</strong><small>NF-e de venda emitidas no período</small></a><a class="commercial-card purchases" href="${esc(href('entradas'))}"><span>Comprado</span><strong>${money(purchases)}</strong><small>${num(purchaseCount)} NF-e de compra financeira · não equivale ao CMV</small></a><div class="commercial-card profit"><span>Lucro líquido</span><strong>${money(metrics.profitabilityProfit)}</strong><small>Falco ${money(metrics.profitabilityGrossProfit)} − fretes entrada ${money(metrics.incomingFreightExpense)}</small></div></div><details class="company-reconciliation"><summary>Ver valores separados por empresa</summary><div>${invoiceRows
-    .map((row) => {
-      const commercial = commercialRows.find((item) => item.companyCode === row.companyCode) || {};
-      return `<div><strong>${esc(names[ids[row.companyCode]] || `Empresa ${row.companyCode}`)}</strong><span>A faturar ${money(commercial.pending || 0)} · faturado ${money(commercial.billed || 0)} · NF-e ${money(row.gross)} · saldo ${money(row.gross - row.returned)}</span></div>`;
-    })
-    .join(
-      ''
-    )}</div></details><p class="nfe-note">Pedidos, faturamento, compras e lucro usam bases distintas e permanecem separados. Compras representam entradas financeiras documentadas e não são tratadas como CMV.</p></article></section>`;
+  const profit = metrics.profitabilityAvailable
+    ? `<article class="panel profitability-panel">
+    ${panelHead('Lucratividade · relatório Falco', 'Custo das vendas e resultado na mesma base do relatório')}
+    <div class="profit-equation"><div><span>Base após devoluções e despesas Falco</span><strong>${money(metrics.profitabilityNet)}</strong></div><div><span>− Custo das vendas no Falco</span><strong>${money(metrics.profitabilityCost)}</strong></div><div class="profit"><span>= Lucro no Falco</span><strong>${money(metrics.profitabilityGrossProfit)}</strong></div></div>
+    <div class="profit-adjustment"><span>Lucro Falco ${money(metrics.profitabilityGrossProfit)} − frete de entrada ${money(metrics.incomingFreightExpense)}</span><strong>${money(metrics.profitabilityProfit)}</strong><small>Lucro após frete de entrada · ${num(metrics.profitabilityMarkup)}% sobre o custo</small></div>
+    <details class="profit-criteria"><summary>Como a conta fecha</summary><p>Base do relatório: ${money(metrics.profitabilityGross)} − ${money(metrics.profitabilityReturned)} devolvidos = ${money(metrics.profitabilityNet)}. Outras despesas Falco de ${money(metrics.falcoExpenses)} já estão consideradas nessa base e não são descontadas novamente. Compras do período não substituem o custo das vendas. O resultado mostrado não representa lucro contábil.</p></details>
+  </article>`
+    : '';
+  return `<section class="maserp-report-panel" aria-label="Movimento fiscal e comercial do Falco">
+  <div class="data-pipelines"><div class="pipeline-state ${sync?.fresh ? 'ok' : 'warn'}"><span>SAÍDAS · FALCO/MASERP</span><strong>${sync?.fresh ? 'Atualização ativa' : 'Aguardando coletor'}</strong><small>Concluída em ${esc(updated)}</small></div><div class="pipeline-state ${sefazErrors ? 'warn' : 'ok'}"><span>ENTRADAS · SEFAZ</span><strong>${esc(sefazHeadline)}</strong><small>${esc(sefazDetail)}</small></div></div>
+  <article class="panel fiscal-overview-panel">${panelHead('Notas fiscais · emitidas, devolvidas e canceladas', `${rangeNote} · ${metrics.label}`)}
+    <div class="fiscal-overview-grid"><a class="fiscal-overview-card issued" href="${esc(href('emitidas'))}"><span>NF-e emitidas</span><strong>${money(metrics.gross)}</strong><small>${num(metrics.invoices)} notas autorizadas</small></a><a class="fiscal-overview-card returned" href="${esc(href('devolucoes'))}"><span>Vendas devolvidas</span><strong>${money(metrics.returned)}</strong><small>Devoluções registradas nas vendas de origem</small></a><a class="fiscal-overview-card canceled" href="${esc(href('canceladas'))}"><span>NF-e canceladas</span><strong>${money(data.canceledValue || 0)}</strong><small>${num(data.canceledCount || 0)} notas · fora das autorizadas</small></a><div class="fiscal-overview-card balance"><span>Saldo fiscal após devoluções</span><strong>${money(metrics.net)}</strong><small>Emitidas menos devolvidas · antes de despesas</small></div></div>
+  </article>
+  <article class="panel commercial-overview-panel">${panelHead('Vendas e faturamento · relatório comercial', 'Pedidos criados no período · valores de venda dos itens do pedido')}
+    <div class="commercial-overview"><div class="commercial-card"><span>Vendas em pedidos</span><strong>${money(metrics.sales)}</strong><small>${num(metrics.orders)} pedidos · faturados e não faturados</small></div><a class="commercial-card orders" href="${esc(href('faturamento'))}"><span>Pedidos a faturar</span><strong>${money(metrics.pending)}</strong><small>${num(metrics.pendingOrders)} pedidos com saldo pendente</small></a><a class="commercial-card billed" href="${esc(href('faturamento'))}"><span>Faturamento comercial</span><strong>${money(metrics.billed)}</strong><small>Itens de pedidos com vínculo a NF-e válida · não é o total fiscal</small></a></div>
+    <details class="company-reconciliation"><summary>Ver valores separados por empresa</summary><div>${invoiceRows
+      .map((row) => {
+        const commercial =
+          commercialRows.find((item) => item.companyCode === row.companyCode) || {};
+        return `<div><strong>${esc(names[ids[row.companyCode]] || `Empresa ${row.companyCode}`)}</strong><span>A faturar ${money(commercial.pending || 0)} · faturamento comercial ${money(commercialBilled(commercial))} · NF-e ${money(row.gross)} · saldo fiscal ${money(row.gross - row.returned)}</span></div>`;
+      })
+      .join('')}</div></details>
+    <p class="nfe-note">Relatório revisto em ${esc(new Date(report.checkedAt || sync.updatedAt).toLocaleString('pt-BR'))}. Vendas em pedidos e faturamento comercial usam a data do pedido. Notas fiscais e lucratividade usam a emissão da nota.</p>
+  </article>
+  <div class="report-independent-panels">${profit}<article class="panel purchases-overview-panel">${panelHead('Compras · entradas documentadas', 'Movimento de compras separado do resultado das vendas')}<a class="purchase-total" href="${esc(href('entradas'))}"><span>Comprado no período</span><strong>${money(purchases)}</strong><small>${num(purchaseCount)} NF-e de compra financeira</small></a><p class="nfe-note">As compras podem formar estoque e atender vendas de outros períodos. Este valor não é o custo usado para calcular o lucro.</p></article></div>
+  </section>`;
 }
 function nfeDashboard() {
   const data = state.nfeData;

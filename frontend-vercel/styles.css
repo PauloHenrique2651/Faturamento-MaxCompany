@@ -2405,3 +2405,108 @@ a.commercial-card:focus-visible {
   line-height: 1.6;
   white-space: normal;
 }
+/* Relatórios independentes: fiscal, comercial, compras e resultado. */
+.maserp-report-panel > .panel {
+  margin-top: 18px;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.commercial-overview {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.report-independent-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(250px, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+  align-items: start;
+}
+.report-independent-panels .panel {
+  min-width: 0;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.profit-equation {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  padding: 22px;
+}
+.profit-equation > div {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.profit-equation span,
+.purchase-total span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.profit-equation strong {
+  font-size: clamp(18px, 1.65vw, 28px);
+  overflow-wrap: anywhere;
+}
+.profit-equation .profit strong,
+.profit-adjustment strong {
+  color: #0d7254;
+}
+.profit-adjustment {
+  display: grid;
+  gap: 10px;
+  padding: 22px;
+  background: #eef8f4;
+  border-block: 1px solid var(--line);
+}
+.profit-adjustment > span {
+  font-size: 12px;
+  color: #365749;
+}
+.profit-adjustment strong {
+  font-size: clamp(24px, 2.2vw, 36px);
+  overflow-wrap: anywhere;
+}
+.profit-adjustment small {
+  color: #365749;
+}
+.profit-criteria {
+  padding: 16px 22px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.profit-criteria summary {
+  cursor: pointer;
+  color: var(--text);
+  padding-block: 8px;
+}
+.profit-criteria p {
+  line-height: 1.7;
+}
+.purchase-total {
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+  text-decoration: none;
+  color: #315f86;
+}
+.purchase-total strong {
+  font-size: clamp(23px, 2vw, 34px);
+  overflow-wrap: anywhere;
+}
+.purchase-total:focus-visible {
+  outline: 3px solid #4f7ea6;
+  outline-offset: -3px;
+}
+@media (max-width: 900px) {
+  .report-independent-panels {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 750px) {
+  .commercial-overview,
+  .profit-equation {
+    grid-template-columns: 1fr;
+  }
+  .profit-equation {
+    gap: 22px;
+  }
+}

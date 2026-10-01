@@ -1,3 +1,4 @@
+import { monthlyReportPeriods } from '../public/lib/maserp-periods.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -161,6 +162,71 @@ export function normalizeCloudDocument(row, direction) {
     source_updated_at: new Date().toISOString(),
     synced_at: new Date().toISOString()
   };
+}
+
+export function samePublishedInvoiceState(actual, target) {
+  if (!actual) return false;
+  const fields = [
+    'normalSale',
+    'gross',
+    'returnedValue',
+    'netValue',
+    'orderNumber',
+    'orderSeries',
+    'sellerCode'
+  ];
+  const items = (rows) =>
+    (rows || [])
+      .map((x) =>
+        [x.sequence, Number(x.returnedQuantity || 0), Number(x.returnedValue || 0)].join('/')
+      )
+      .sort()
+      .join('|');
+  return (
+    fields.every((key) => actual[key] === target[key]) &&
+    items(actual.returnedItems) === items(target.returnedItems)
+  );
+}
+
+// Verifica a nuvem, não apenas o registro local de mudanças já enviadas.
+async function verifyPublishedInvoiceStates(states, state, end) {
+  const start = monthlyReportPeriods(end)[1][0];
+  const ids = { 1: 1, 3: 2, 5: 3, 6: 4 };
+  const expected = new Map(
+    states
+      .filter((row) => row.date >= start)
+      .map((row) => [ids[row.companyCode] + '/' + row.accessKey, row])
+  );
+  let checked = 0,
+    mismatches = 0;
+  for (let offset = 0; ; offset += 500) {
+    const rows = await request(
+      '/rest/v1/fiscal_documents?direction=eq.outgoing&issued_on=gte.' +
+        start +
+        '&issued_on=lte.' +
+        end +
+        '&select=company_id,access_key,erp:source_payload->erp,is_canceled&order=company_id,access_key&limit=500&offset=' +
+        offset
+    );
+    for (const row of rows) {
+      const key = row.company_id + '/' + row.access_key;
+      const source = expected.get(key);
+      if (!source) continue;
+      checked++;
+      const actual = row.erp;
+      const target = applyInvoiceStates(
+        [{ companyId: row.company_id, key: row.access_key }],
+        [source]
+      )[0].erp;
+      if (!samePublishedInvoiceState(actual, target) || (source.canceled && !row.is_canceled)) {
+        mismatches++;
+        delete (state.erpFingerprints ||= {})[row.access_key];
+        delete (state.documentFingerprints ||= {})[row.company_id + '/outgoing/' + row.access_key];
+      }
+    }
+    if (rows.length < 500) break;
+  }
+  return { checked, mismatches };
 }
 
 async function syncInvoiceStateChanges(states, state, alreadySent) {
@@ -530,6 +596,16 @@ async function updateRun(id, values) {
   });
 }
 
+export async function readPublishedMaserpReports() {
+  try {
+    const report = JSON.parse(await readFile(join(root, 'report-snapshots.json'), 'utf8'));
+    const ageSeconds = Math.max(0, (Date.now() - Date.parse(report.updatedAt)) / 1000);
+    return { ...report, ageSeconds, fresh: ageSeconds <= 120 };
+  } catch {
+    return { fresh: false, maserpSales: null, maserpReports: {} };
+  }
+}
+
 export function readSupabaseSyncStatus() {
   return { ...lastResult, configured: Boolean(config().url && config().secret), running };
 }
@@ -565,7 +641,12 @@ export async function syncSupabaseFromFalco() {
     const created = await request('/rest/v1/crm_sync_runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
-      body: JSON.stringify({ source: 'falco-local', status: 'running', details: { start, end } })
+      body: JSON.stringify({
+        source: 'falco-local',
+        status: 'running',
+        started_at: new Date().toISOString(),
+        details: { start, end }
+      })
     });
     runId = created?.[0]?.id || null;
     const [outgoing, incoming, sefaz, maserpSales, invoiceStates, productReferences] =
@@ -577,6 +658,18 @@ export async function syncSupabaseFromFalco() {
         readMaserpInvoiceStates(settings.startDate, end),
         readMaserpProductReferences(shiftDays(`${end.slice(0, 7)}-01`, -365), end)
       ]);
+    if (!maserpSales.available)
+      throw new Error('Relatórios MASERP indisponíveis; preservado último conjunto confirmado');
+    state.maserpReports ||= {};
+    state.maserpReports[end.slice(0, 7)] = maserpSales;
+    const [previousStart, previousEnd] = monthlyReportPeriods(end)[1];
+    const previous = await readMaserpSalesSnapshot(previousStart, previousEnd);
+    if (previous.available) state.maserpReports[previousStart.slice(0, 7)] = previous;
+    state.maserpReports = Object.fromEntries(
+      Object.entries(state.maserpReports)
+        .sort(([a], [b]) => b.localeCompare(a))
+        .slice(0, 12)
+    );
     if (!invoiceStates.available)
       throw new Error('Revisão MASERP indisponível; preservado último conjunto confirmado');
     if (invoiceStates.available) {
@@ -611,6 +704,11 @@ export async function syncSupabaseFromFalco() {
     );
     const incomingRows = [...incoming.documents, ...incoming.canceledDocuments].map((row) =>
       normalizeCloudDocument(row, 'incoming')
+    );
+    const publicationReconciliation = await verifyPublishedInvoiceStates(
+      invoiceStates.documents,
+      state,
+      end
     );
     const changes = changedDocuments(
       [...outgoingRows, ...incomingRows],
@@ -697,7 +795,9 @@ export async function syncSupabaseFromFalco() {
       incomingSources: `${incoming.sourcesAvailable}/${incoming.sourcesTotal}`,
       sefaz,
       maserpSales,
+      maserpReports: state.maserpReports,
       erpReconciliation,
+      publicationReconciliation,
       productReconciliation,
       artifactAttempts,
       artifactErrors,
@@ -716,6 +816,17 @@ export async function syncSupabaseFromFalco() {
         artifact_count: artifactCount,
         details
       });
+    const reportPath = join(root, 'report-snapshots.json');
+    await writeFile(
+      reportPath + '.tmp',
+      JSON.stringify({
+        updatedAt: state.lastSuccessAt,
+        maserpSales,
+        maserpReports: state.maserpReports,
+        sefaz
+      })
+    );
+    await rename(reportPath + '.tmp', reportPath);
     lastResult = {
       configured: true,
       running: false,

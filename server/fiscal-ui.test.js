@@ -13,6 +13,7 @@ import {
   documentDetailFromCloud
 } from '../frontend-vercel/api/[...path].js';
 import * as format from '../public/lib/format.js';
+import { selectMaserpReport, commercialBilled } from '../public/lib/maserp-periods.js';
 import * as analysis from '../public/lib/analysis.js';
 import { icon } from '../public/ui/icons.js';
 import { viewLabels } from '../public/ui/navigation.js';
@@ -85,6 +86,8 @@ export function renderFiscalViews(
   };
   const context = vm.createContext({
     ...analysis,
+    selectMaserpReport,
+    commercialBilled,
     state,
     $: select,
     esc: format.escapeHtml,
@@ -190,4 +193,37 @@ test('conciliação aberta permanece aberta ao atualizar o faturamento', () => {
   r.state.fiscalAnalysisOpen = true;
   vm.runInContext('revenueDashboard()', r.context);
   assert.match(r.nodes.get('#page').innerHTML, /<details class="panel fiscal-analysis" open>/);
+});
+
+test('fiscal, comercial, compras e lucro conservam suas bases e não subtraem despesas duas vezes', () => {
+  const r = renderFiscalViews([documentFromCloud(cloudRow)], [], '2026-09-01', '2026-09-25');
+  r.state.nfeData.synchronization = {
+    fresh: true,
+    updatedAt: '2026-09-25T15:00:00Z',
+    maserpSales: {
+      available: true,
+      startDate: '2026-09-01',
+      endDate: '2026-09-25',
+      companies: [{ companyCode: 1, gross: 100, returned: 0, count: 1 }],
+      commercial: [
+        { companyCode: 1, sales: 120, billed: 100, cohortBilled: 80, pending: 40, pendingOrders: 1 }
+      ],
+      profitability: [
+        { companyCode: 1, gross: 95, net: 90, returned: 5, cost: 60, profit: 30, expenses: 5 }
+      ],
+      incomingFreights: [{ companyCode: 1, value: 2 }]
+    }
+  };
+  const m = vm.runInContext('maserpMetrics(state.nfeData)', r.context);
+  assert.equal(m.billed, 80);
+  assert.equal(m.gross, 100);
+  assert.equal(m.profitabilityNet - m.profitabilityCost, m.profitabilityGrossProfit);
+  assert.equal(m.profitabilityProfit, 28);
+  assert.equal(m.falcoExpenses, 5);
+  vm.runInContext('nfeDashboard()', r.context);
+  const html = r.nodes.get('#page').innerHTML;
+  assert.match(html, /Vendas e faturamento · relatório comercial/);
+  assert.match(html, /Custo das vendas no Falco/);
+  assert.match(html, /Compras · entradas documentadas/);
+  assert.ok(!html.includes('Lucro líquido'));
 });
