@@ -209,7 +209,15 @@ test('fiscal, comercial, compras e lucro conservam suas bases e não subtraem de
       endDate: '2026-09-25',
       companies: [{ companyCode: 1, gross: 100, returned: 0, count: 1 }],
       commercial: [
-        { companyCode: 1, sales: 120, billed: 100, cohortBilled: 80, pending: 40, pendingOrders: 1 }
+        {
+          companyCode: 1,
+          sales: 120,
+          orders: 3,
+          billed: 100,
+          cohortBilled: 80,
+          pending: 40,
+          pendingOrders: 1
+        }
       ],
       profitability: [
         { companyCode: 1, gross: 95, net: 90, returned: 5, cost: 60, profit: 30, expenses: 5 }
@@ -226,6 +234,8 @@ test('fiscal, comercial, compras e lucro conservam suas bases e não subtraem de
   vm.runInContext('nfeDashboard()', r.context);
   const html = r.nodes.get('#page').innerHTML;
   assert.match(html, /Pedidos do período/);
+  assert.match(html, /Criados de 01\/09\/2026 a 25\/09\/2026 · 3 pedidos/);
+  assert.match(html, /Total desses pedidos<\/span><strong>R\$\s*120,00/);
   assert.match(html, /Custo das vendas/);
   assert.match(html, /Não são o custo das vendas/);
   assert.ok(!html.includes('Lucro líquido'));
@@ -266,7 +276,9 @@ test('mostrador mostra lucro, seis movimentos e dois estados dos pedidos sem dup
       startDate: '2026-09-01',
       endDate: '2026-09-25',
       profitability: [{ companyCode: 1, net: 90, returned: 5, expenses: 5, cost: 60, profit: 30 }],
-      commercial: [{ companyCode: 1, sales: 120, billed: 80, pending: 40, pendingOrders: 1 }],
+      commercial: [
+        { companyCode: 1, sales: 120, orders: 3, billed: 80, pending: 40, pendingOrders: 1 }
+      ],
       companies: [],
       incomingFreights: [{ companyCode: 1, value: 2 }]
     }
@@ -292,6 +304,9 @@ test('mostrador mostra lucro, seis movimentos e dois estados dos pedidos sem dup
   ])
     assert.ok(summary.includes(label), label);
   assert.ok(summary.indexOf('LUCRO DAS VENDAS') < summary.indexOf('PEDIDOS DO PERÍODO'));
+  assert.match(summary, /Criados de 01\/09\/2026 a 25\/09\/2026 · 3 pedidos/);
+  assert.match(summary, /Total desses pedidos<\/span><strong>R\$\s*120,00/);
+  assert.match(summary, /Situação do faturamento até 25\/09\/2026/);
   assert.ok(!summary.includes('Vendas em pedidos'));
   assert.ok(!summary.includes('Saldo fiscal'));
   assert.ok(!summary.includes('Faturamento comercial'));

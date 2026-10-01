@@ -2614,3 +2614,21 @@ a.commercial-card:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+.commercial-order-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+}
+.commercial-order-total span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.commercial-order-total strong {
+  font-size: clamp(24px, 2vw, 32px);
+  font-variant-numeric: tabular-nums;
+}
