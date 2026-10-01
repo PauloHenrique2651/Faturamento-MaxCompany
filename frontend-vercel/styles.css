@@ -2622,7 +2622,7 @@ a.commercial-card:focus-visible {
   flex-wrap: wrap;
   gap: 8px 16px;
   padding: 16px 20px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 .commercial-order-total span {
   color: var(--muted);
