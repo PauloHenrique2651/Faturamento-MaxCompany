@@ -15,6 +15,7 @@ import { sellerCommissionsRoute } from '../../server/seller-commissions.js';
 import { equivalencesRoute } from '../../server/product-equivalences.js';
 import { walletRoute, validWalletStoragePath } from '../../server/wallet-route.js';
 import { payablesRoute, validPayablesStoragePath } from '../../server/payables-route.js';
+import { financeRoute } from '../../server/finance-route.js';
 import { ordersRoute, validOrderStoragePath } from '../../server/order-route.js';
 
 const scrypt = promisify(scryptCallback);
@@ -685,7 +686,9 @@ async function handle(req, res) {
   const crmRoute = url.searchParams.get('crmRoute');
   const path =
     url.pathname === '/api/executive' &&
-    ['targets', 'equivalences', 'commissions', 'orders', 'wallet', 'payables'].includes(crmRoute)
+    ['targets', 'equivalences', 'commissions', 'orders', 'wallet', 'payables', 'finance'].includes(
+      crmRoute
+    )
       ? `/api/commercial/${crmRoute}`
       : url.pathname;
   if (path === '/api/auth/login' && req.method === 'POST') {
@@ -761,6 +764,15 @@ async function handle(req, res) {
     )
   )
     return json(res, 403, { error: 'Acesso restrito ao fiscal.' });
+  if (path === '/api/commercial/finance') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
+    const result = await financeRoute({
+      user,
+      metadata: await syncOverview(),
+      download: downloadStorageObject
+    });
+    return json(res, result.status, result.body);
+  }
   if (path === '/api/commercial/payables') {
     if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
     const result = await payablesRoute({

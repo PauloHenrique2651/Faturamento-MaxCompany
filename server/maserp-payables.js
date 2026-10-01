@@ -5,7 +5,7 @@ export async function readMaserpPayables() {
     const pool = await getMaserpPool();
     const result = await pool.request().query(`
       SELECT c.emp_empresa_IN companyCode,c.doc_pagamento_IN titleNumber,c.par_parcela_IN installment,
-        c.for_fornecedor_IN supplierCode,f.for_razao supplier,c.par_numerodocumento_VC documentNumber,
+        c.for_fornecedor_IN supplierCode,f.for_razao supplier,f.for_cnpj supplierTaxId,c.par_numerodocumento_VC documentNumber,
         CONVERT(varchar(10),c.doc_datalancamento_DT,23) issuedOn,
         CONVERT(varchar(10),COALESCE(c.par_datareprogramada_DT,c.par_datavencimento_DT),23) dueOn,
         CONVERT(varchar(10),c.par_datavencimento_DT,23) originalDueOn,
@@ -13,11 +13,14 @@ export async function readMaserpPayables() {
         ISNULL(c.par_desconto_MN,0) discount,ISNULL(c.par_juros_MN,0)+ISNULL(c.par_mora_MN,0) charges,
         ISNULL(c.par_bloqueado_BT,0) blocked,ISNULL(c.par_bloqueadopeladevolucao_BT,0) returnBlocked,
         c.par_chave_xml_notafiscalentradaxml_VC accessKey,
-        (SELECT DISTINCT n.not_numero_IN invoiceNumber,n.not_chavenotafiscaleletronica_VC accessKey
+        (SELECT DISTINCT n.not_numero_IN invoiceNumber,n.not_serie_IN invoiceSeries,n.not_chavenotafiscaleletronica_VC accessKey,
+            CONVERT(varchar(10),n.not_dataemissao_DT,23) issuedOn,
+            part.nfp_nome_VC supplier,part.nfp_cnpj_VC supplierTaxId,part.nfp_fornecedor_IN supplierCode
           FROM notafiscalentradadocumentosapagar_T l JOIN notafiscalentrada_T n
           ON n.emp_empresa_IN=l.emp_empresa_IN AND n.not_numerointerno_IN=l.not_numerointerno_IN
+          LEFT JOIN notafiscalparticipantes_T part ON part.nfp_codigo_IN=n.not_codigodadoparticipante_IN
           WHERE l.emp_empresa_IN=c.emp_empresa_IN AND l.doc_pagamento_IN=c.doc_pagamento_IN
-            AND l.par_parcela_IN=c.par_parcela_IN AND ISNULL(n.not_excluido_BT,0)=0
+            AND ISNULL(n.not_excluido_BT,0)=0
           FOR JSON PATH) invoices
       FROM contasapagar_T c LEFT JOIN fornecedor f ON f.for_codigo=c.for_fornecedor_IN
       WHERE c.emp_empresa_IN IN (1,3,5,6)

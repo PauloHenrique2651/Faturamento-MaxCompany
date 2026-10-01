@@ -1,7 +1,9 @@
 import { walletCompanyIds } from './wallet.js';
+export const payableOrigin = (row) =>
+  row.invoices?.length || /^\d{44}$/.test(row.accessKey || '') ? 'invoice' : 'unlinked';
 export function payablesSelection(
   rows,
-  { inicio, fim, company = '', query = '', today, status = '', sort = 'date' } = {}
+  { inicio, fim, company = '', query = '', today, status = '', sort = 'date', origin = '' } = {}
 ) {
   const normalize = (s) =>
     String(s || '')
@@ -13,6 +15,7 @@ export function payablesSelection(
     .filter(
       (r) =>
         (!company || String(walletCompanyIds[r.companyCode]) === String(company)) &&
+        (!origin || payableOrigin(r) === origin) &&
         r.dueOn &&
         r.dueOn >= inicio &&
         r.dueOn <= fim &&
@@ -24,7 +27,7 @@ export function payablesSelection(
               : r.dueOn >= today)) &&
         (!term ||
           normalize(
-            `${r.documentNumber} ${r.supplier} ${r.titleNumber} ${(r.invoices || []).map((n) => n.invoiceNumber).join(' ')}`
+            `${r.documentNumber} ${r.supplier} ${r.supplierTaxId || ''} ${r.titleNumber} ${(r.invoices || []).map((n) => n.invoiceNumber).join(' ')}`
           ).includes(term))
     )
     .sort(

@@ -1814,25 +1814,22 @@ async function load(background = false) {
       `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Carregando notas…'}</div>`;
   try {
     if (['carteira', 'pagar'].includes(state.view)) {
-      const results = await Promise.allSettled([
-        fetchJson('/api/commercial/wallet'),
-        fetchJson('/api/commercial/payables')
-      ]);
+      const finance = await fetchJson('/api/commercial/finance');
       if (seq !== state.seq) return;
-      const keys = ['walletData', 'payablesData'];
-      for (let i = 0; i < keys.length; i++) {
-        if (results[i].status === 'fulfilled') state[keys[i]] = results[i].value;
-        else if (state[keys[i]]) state[keys[i]] = { ...state[keys[i]], stale: true };
+      for (const [key, source] of [
+        ['walletData', 'wallet'],
+        ['payablesData', 'payables']
+      ]) {
+        if (finance[source]) state[key] = finance[source];
+        else if (state[key]) state[key] = { ...state[key], stale: true };
       }
       const data = state.view === 'pagar' ? state.payablesData : state.walletData;
-      if (!data) throw results[state.view === 'pagar' ? 1 : 0].reason;
+      if (!data) throw new Error(finance.errors.join(' ') || 'Carteira ainda não disponível.');
       rememberView(snapshotScope);
       showXmlCompanies();
       (state.view === 'pagar' ? payablesPage : walletPage)();
       const stale =
-        results.some((r) => r.status === 'rejected') ||
-        state.walletData?.stale ||
-        state.payablesData?.stale;
+        finance.errors.length > 0 || state.walletData?.stale || state.payablesData?.stale;
       $('#sync-status').textContent = stale
         ? 'Uma carteira aguarda revisão'
         : 'Financeiro revisado em ' + new Date(data.checkedAt).toLocaleString('pt-BR');

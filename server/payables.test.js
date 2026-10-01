@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { payablesSelection } from '../public/lib/payables.js';
+import { payablesSelection, payableOrigin } from '../public/lib/payables.js';
 import { cashFlow } from '../public/lib/cash-flow.js';
 import { publishPayables, payablesRoute, validPayablesStoragePath } from './payables-route.js';
 import { readFile } from 'node:fs/promises';
@@ -125,4 +125,58 @@ test('pagamentos e provisões não entram no catálogo de obrigações reais; no
       )
     );
   }
+});
+
+test('carteiras conjuntas usam a mesma publicação e não fabricam uma previsão quando uma fonte falta', async () => {
+  const { financeRoute } = await import('./finance-route.js');
+  const walletPath = 'wallet/catalog/' + 'a'.repeat(24) + '.json';
+  const payablePath = 'payables/catalog/' + 'b'.repeat(24) + '.json';
+  const metadata = {
+    wallet: { available: true, path: walletPath, checkedAt: 'same-run' },
+    payables: { available: true, path: payablePath, checkedAt: 'same-run' }
+  };
+  const download = async (path) => ({
+    ok: true,
+    json: async () => ({ available: true, rows: path === walletPath ? receivable : payable })
+  });
+  const full = await financeRoute({ user: { role: 'admin' }, metadata, download });
+  assert.equal(full.status, 200);
+  assert.equal(full.body.wallet.checkedAt, full.body.payables.checkedAt);
+  assert.deepEqual(full.body.errors, []);
+  const partial = await financeRoute({
+    user: { role: 'admin' },
+    metadata: { wallet: metadata.wallet },
+    download
+  });
+  assert.equal(partial.status, 200);
+  assert.equal(partial.body.payables, null);
+  assert.equal(partial.body.errors.length, 1);
+  assert.equal((await financeRoute({ user: { role: 'fiscal' }, metadata, download })).status, 403);
+});
+
+test('origem da obrigação distingue notas de entrada e fornecedor sem usar semelhança de nomes', () => {
+  const rows = [
+    {
+      ...payable[0],
+      supplier: 'ATLAS S.A',
+      supplierTaxId: '89.723.837/0008-49',
+      invoices: [{ invoiceNumber: 1054433 }]
+    },
+    {
+      ...payable[0],
+      id: '1/1/2',
+      installment: 2,
+      supplier: 'ATLAS S.A',
+      supplierTaxId: '89.723.837/0008-49',
+      invoices: [{ invoiceNumber: 1054433 }]
+    },
+    { ...payable[0], id: '1/4/1', supplier: 'LIGHT', invoices: [] }
+  ];
+  assert.equal(payableOrigin(rows[0]), 'invoice');
+  assert.equal(payableOrigin(rows[2]), 'unlinked');
+  assert.equal(payablesSelection(rows, { ...options, origin: 'invoice' }).rows.length, 2);
+  assert.equal(payablesSelection(rows, { ...options, origin: 'unlinked' }).rows.length, 1);
+  assert.equal(payablesSelection(rows, { ...options, query: '1054433' }).totals.forecast, 100);
+  assert.equal(payablesSelection(rows, { ...options, query: 'ATLAS COPCO' }).rows.length, 0);
+  assert.equal(payablesSelection(rows, { ...options, query: '89.723.837/0008-49' }).rows.length, 2);
 });

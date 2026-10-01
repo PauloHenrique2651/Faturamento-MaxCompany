@@ -26,6 +26,13 @@ export function renderWalletPage({ data, payables, state, page, header }) {
   const open = new Set(
     [...page.querySelectorAll('details[data-wallet][open]')].map((e) => e.dataset.wallet)
   );
+  const active = document.activeElement;
+  const focus =
+    active?.id === 'wallet-search'
+      ? { start: active.selectionStart, end: active.selectionEnd }
+      : null;
+  const flowDetail = page.querySelector('.cash-flow-panel details');
+  if (flowDetail) state.cashFlowOpen = flowDetail.open;
   page.innerHTML =
     header(
       'Carteira a receber',
@@ -110,4 +117,9 @@ export function renderWalletPage({ data, payables, state, page, header }) {
     paint();
   };
   paint();
+  if (focus) {
+    const input = page.querySelector('#wallet-search');
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(focus.start, focus.end);
+  }
 }

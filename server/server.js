@@ -24,6 +24,7 @@ import {
 import { crmCloudRequest, crmOrderDownload } from './crm-store.js';
 import { walletRoute } from './wallet-route.js';
 import { payablesRoute } from './payables-route.js';
+import { financeRoute } from './finance-route.js';
 import { ordersRoute } from './order-route.js';
 import { salesTargetsRoute } from './sales-targets.js';
 import { sellerCommissionsRoute } from './seller-commissions.js';
@@ -147,6 +148,15 @@ async function cached(key, loader) {
 }
 
 async function api(req, res, url, user) {
+  if (url.pathname === '/api/commercial/finance') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
+    const result = await financeRoute({
+      user,
+      metadata: await readPublishedMaserpReports(),
+      download: crmOrderDownload
+    });
+    return json(res, result.status, result.body);
+  }
   if (url.pathname === '/api/commercial/payables') {
     if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
     const result = await payablesRoute({
