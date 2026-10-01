@@ -1,3 +1,4 @@
+import { renderMostrador } from '../public/mostrador.js';
 import {
   registeredSalesReturns,
   saleReturnsValue,
@@ -12,6 +13,7 @@ import {
   documentFromCloud,
   documentDetailFromCloud
 } from '../frontend-vercel/api/[...path].js';
+import { profitabilityComposition } from '../public/lib/profitability.js';
 import * as format from '../public/lib/format.js';
 import { selectMaserpReport, commercialBilled } from '../public/lib/maserp-periods.js';
 import * as analysis from '../public/lib/analysis.js';
@@ -88,6 +90,7 @@ export function renderFiscalViews(
     ...analysis,
     selectMaserpReport,
     commercialBilled,
+    profitabilityComposition,
     state,
     $: select,
     esc: format.escapeHtml,
@@ -222,8 +225,74 @@ test('fiscal, comercial, compras e lucro conservam suas bases e não subtraem de
   assert.equal(m.falcoExpenses, 5);
   vm.runInContext('nfeDashboard()', r.context);
   const html = r.nodes.get('#page').innerHTML;
-  assert.match(html, /Vendas e faturamento · relatório comercial/);
-  assert.match(html, /Custo das vendas no Falco/);
-  assert.match(html, /Compras · entradas documentadas/);
+  assert.match(html, /Pedidos do período/);
+  assert.match(html, /Custo das vendas/);
+  assert.match(html, /Não são o custo das vendas/);
   assert.ok(!html.includes('Lucro líquido'));
+});
+
+test('lucratividade vem antes das operações e do comercial nas duas telas', () => {
+  const r = renderFiscalViews([], [], '2026-09-01', '2026-09-25');
+  r.state.nfeData.synchronization = {
+    fresh: true,
+    updatedAt: '2026-09-25T15:00:00Z',
+    maserpSales: {
+      available: true,
+      startDate: '2026-09-01',
+      endDate: '2026-09-25',
+      profitability: [{ companyCode: 1, net: 90, returned: 5, expenses: 5, cost: 60, profit: 30 }],
+      commercial: [],
+      companies: [],
+      incomingFreights: [{ companyCode: 1, value: 2 }]
+    }
+  };
+  for (const render of ['nfeDashboard', 'revenueDashboard']) {
+    vm.runInContext(render + '()', r.context);
+    const html = r.nodes.get('#page').innerHTML;
+    assert.ok(html.indexOf('profit-priority') < html.indexOf('fiscal-overview-panel'));
+    assert.ok(html.indexOf('Lucro das vendas') < html.indexOf('Pedidos do período'));
+    assert.match(html, /Vendas faturadas/);
+    assert.match(html, /Canceladas já estão excluídas/);
+  }
+});
+
+test('mostrador mostra lucro, seis movimentos e dois estados dos pedidos sem duplicar total de pedidos', () => {
+  const r = renderFiscalViews([], [], '2026-09-01', '2026-09-25');
+  r.state.nfeData.synchronization = {
+    fresh: true,
+    updatedAt: '2026-09-25T15:00:00Z',
+    maserpSales: {
+      available: true,
+      startDate: '2026-09-01',
+      endDate: '2026-09-25',
+      profitability: [{ companyCode: 1, net: 90, returned: 5, expenses: 5, cost: 60, profit: 30 }],
+      commercial: [{ companyCode: 1, sales: 120, billed: 80, pending: 40, pendingOrders: 1 }],
+      companies: [],
+      incomingFreights: [{ companyCode: 1, value: 2 }]
+    }
+  };
+  const { html } = renderMostrador(
+    r.state.nfeData,
+    r.state.incomingData,
+    [],
+    new URLSearchParams('inicio=2026-09-01&fim=2026-09-25'),
+    { slide: 0, paused: true }
+  );
+  const summary = html.slice(html.indexOf('data-slide="0"'), html.indexOf('data-slide="1"'));
+  for (const label of [
+    'LUCRO DAS VENDAS',
+    'Vendas faturadas',
+    'Compras',
+    'Notas canceladas',
+    'Vendas devolvidas',
+    'Custo das vendas',
+    'Frete de entrada',
+    'Pedidos a faturar',
+    'Já faturado desses pedidos'
+  ])
+    assert.ok(summary.includes(label), label);
+  assert.ok(summary.indexOf('LUCRO DAS VENDAS') < summary.indexOf('PEDIDOS DO PERÍODO'));
+  assert.ok(!summary.includes('Vendas em pedidos'));
+  assert.ok(!summary.includes('Saldo fiscal'));
+  assert.ok(!summary.includes('Faturamento comercial'));
 });

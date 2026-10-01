@@ -199,8 +199,8 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         SELECT p.emp_empresa_IN company_code,
           p.ped_pedido_IN order_number,
           p.ped_serie_CH order_series,
-          CONVERT(decimal(18,2), ISNULL(i.ite_quantidade_NM,0) * ISNULL(i.ite_preco_MN,0)) sale_value,
-          CONVERT(decimal(18,2), ISNULL(i.ite_quantidade_NM,0) * (ISNULL(i.ite_preco_MN,0) - ISNULL(i.ite_lucro_MN,0))) sale_cost,
+          CONVERT(decimal(18,2), (ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0)) * ISNULL(i.ite_preco_MN,0)) sale_value,
+          CONVERT(decimal(18,2), (ISNULL(i.ite_quantidade_NM,0)-ISNULL(i.ite_quantidadecancelada_NM,0)) * (ISNULL(i.ite_preco_MN,0) - ISNULL(i.ite_lucro_MN,0))) sale_cost,
           ISNULL(i.ite_produtosemgiro_BT,0) without_rotation,
           billed.cost_unit,
           billed.invoice_linked,
@@ -250,11 +250,11 @@ export async function readMaserpSalesSnapshot(startDate, endDate) {
         SUM(sale_cost) sales_cost,
         SUM(CASE WHEN without_rotation=0 THEN sale_value ELSE 0 END) sales_with_rotation,
         SUM(CASE WHEN without_rotation=1 THEN sale_value ELSE 0 END) sales_without_rotation,
-        SUM(CASE WHEN invoice_linked=1 THEN sale_value ELSE 0 END) billed_value,
-        SUM(CASE WHEN invoice_linked=1 AND cost_unit IS NOT NULL THEN sale_value ELSE 0 END) billed_cost_coverage,
-        SUM(CASE WHEN invoice_linked=1 AND cost_unit IS NOT NULL THEN billed_cost ELSE 0 END) billed_cost,
-        SUM(CASE WHEN invoice_linked=1 AND without_rotation=0 THEN sale_value ELSE 0 END) billed_with_rotation,
-        SUM(CASE WHEN invoice_linked=1 AND without_rotation=1 THEN sale_value ELSE 0 END) billed_without_rotation
+        SUM(CONVERT(decimal(18,2),billed_quantity*unit_price)) billed_value,
+        SUM(CASE WHEN invoice_linked=1 AND cost_unit IS NOT NULL THEN CONVERT(decimal(18,2),billed_quantity*unit_price) ELSE 0 END) billed_cost_coverage,
+        SUM(CASE WHEN invoice_linked=1 AND cost_unit IS NOT NULL THEN CONVERT(decimal(18,2),billed_quantity*cost_unit) ELSE 0 END) billed_cost,
+        SUM(CASE WHEN invoice_linked=1 AND without_rotation=0 THEN CONVERT(decimal(18,2),billed_quantity*unit_price) ELSE 0 END) billed_with_rotation,
+        SUM(CASE WHEN invoice_linked=1 AND without_rotation=1 THEN CONVERT(decimal(18,2),billed_quantity*unit_price) ELSE 0 END) billed_without_rotation
         ,SUM(CONVERT(decimal(18,2),CASE WHEN active_quantity>billed_quantity THEN (active_quantity-billed_quantity)*unit_price ELSE 0 END)) pending_value
         ,COUNT(DISTINCT CASE WHEN active_quantity>billed_quantity THEN CONCAT(company_code,'|',order_number,'|',order_series) END) pending_orders
       FROM commercial_lines

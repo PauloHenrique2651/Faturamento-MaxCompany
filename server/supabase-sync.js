@@ -1,3 +1,4 @@
+import { historicalPage, historicalReportPeriod } from './reconciliation-plan.js';
 import { monthlyReportPeriods } from '../public/lib/maserp-periods.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -193,41 +194,72 @@ export function samePublishedInvoiceState(actual, target) {
 async function verifyPublishedInvoiceStates(states, state, end) {
   const start = monthlyReportPeriods(end)[1][0];
   const ids = { 1: 1, 3: 2, 5: 3, 6: 4 };
+  const allExpected = new Map(
+    states.map((row) => [ids[row.companyCode] + '/' + row.accessKey, row])
+  );
   const expected = new Map(
-    states
-      .filter((row) => row.date >= start)
-      .map((row) => [ids[row.companyCode] + '/' + row.accessKey, row])
+    [...allExpected].filter(
+      ([, row]) => row.date >= start && row.date <= end && row.normalSale && !row.canceled
+    )
   );
   let checked = 0,
     mismatches = 0;
+  const verify = (rows) => {
+    let reviewed = 0,
+      different = 0;
+    for (const row of rows) {
+      const key = row.company_id + '/' + row.access_key;
+      const source = allExpected.get(key);
+      if (!source) continue;
+      reviewed++;
+      const target = applyInvoiceStates(
+        [{ companyId: row.company_id, key: row.access_key }],
+        [source]
+      )[0].erp;
+      if (!samePublishedInvoiceState(row.erp, target) || (source.canceled && !row.is_canceled)) {
+        different++;
+        delete (state.erpFingerprints ||= {})[row.access_key];
+        delete (state.documentFingerprints ||= {})[row.company_id + '/outgoing/' + row.access_key];
+      }
+    }
+    return { checked: reviewed, mismatches: different };
+  };
+  const fields =
+    '&select=company_id,access_key,erp:source_payload->erp,is_canceled&order=company_id,access_key';
   for (let offset = 0; ; offset += 500) {
     const rows = await request(
       '/rest/v1/fiscal_documents?direction=eq.outgoing&issued_on=gte.' +
         start +
         '&issued_on=lte.' +
         end +
-        '&select=company_id,access_key,erp:source_payload->erp,is_canceled&order=company_id,access_key&limit=500&offset=' +
+        fields +
+        '&limit=500&offset=' +
         offset
     );
-    for (const row of rows) {
-      const key = row.company_id + '/' + row.access_key;
-      const source = expected.get(key);
-      if (!source) continue;
-      checked++;
-      const actual = row.erp;
-      const target = applyInvoiceStates(
-        [{ companyId: row.company_id, key: row.access_key }],
-        [source]
-      )[0].erp;
-      if (!samePublishedInvoiceState(actual, target) || (source.canceled && !row.is_canceled)) {
-        mismatches++;
-        delete (state.erpFingerprints ||= {})[row.access_key];
-        delete (state.documentFingerprints ||= {})[row.company_id + '/outgoing/' + row.access_key];
-      }
-    }
+    const result = verify(rows);
+    checked += result.checked;
+    mismatches += result.mismatches;
+    for (const row of rows) expected.delete(row.company_id + '/' + row.access_key);
     if (rows.length < 500) break;
   }
-  return { checked, mismatches };
+  for (const [key, row] of expected) {
+    delete (state.erpFingerprints ||= {})[row.accessKey];
+    delete (state.documentFingerprints ||= {})[key.split('/')[0] + '/outgoing/' + row.accessKey];
+  }
+  const offset = Number(state.historicalCloudOffset || 0);
+  const old = await request(
+    '/rest/v1/fiscal_documents?direction=eq.outgoing&issued_on=lt.' +
+      start +
+      fields +
+      '&limit=500&offset=' +
+      offset
+  );
+  const historical = {
+    ...verify(old),
+    ...historicalPage(state, old, new Date().toISOString()),
+    lastCompletedAt: state.lastHistoricalCloudSweepAt || null
+  };
+  return { checked, mismatches, missing: expected.size, historical };
 }
 
 async function syncInvoiceStateChanges(states, state, alreadySent) {
@@ -752,6 +784,23 @@ export async function syncSupabaseFromFalco() {
     const [previousStart, previousEnd] = monthlyReportPeriods(end)[1];
     const previous = await readMaserpSalesSnapshot(previousStart, previousEnd);
     if (previous.available) state.maserpReports[previousStart.slice(0, 7)] = previous;
+    const historicalPeriod = historicalReportPeriod(state, settings.startDate, end);
+    let historicalReport = null;
+    if (historicalPeriod) {
+      const snapshot = await readMaserpSalesSnapshot(...historicalPeriod);
+      historicalReport = {
+        start: historicalPeriod[0],
+        end: historicalPeriod[1],
+        available: snapshot.available,
+        checkedAt: snapshot.checkedAt || null
+      };
+      // Registre a tentativa também em falha para que o histórico não monopolize a cadência.
+      state.lastHistoricalReportAt = new Date().toISOString();
+      (state.historicalReportAttempts ||= {})[historicalPeriod[0].slice(0, 7)] =
+        state.lastHistoricalReportAt;
+      if (snapshot.available) state.maserpReports[snapshot.startDate.slice(0, 7)] = snapshot;
+    }
+
     state.maserpReports = Object.fromEntries(
       Object.entries(state.maserpReports)
         .sort(([a], [b]) => b.localeCompare(a))
@@ -790,7 +839,7 @@ export async function syncSupabaseFromFalco() {
       normalizeCloudDocument(row, 'outgoing')
     );
     const incomingRecovery = await recoverIncomingCloudSummaries(
-      previousStart,
+      settings.startDate,
       end,
       productReferences
     );
@@ -893,6 +942,7 @@ export async function syncSupabaseFromFalco() {
       erpReconciliation,
       publicationReconciliation,
       incomingRecovery,
+      historicalReport,
       productReconciliation,
       artifactAttempts,
       artifactErrors,
