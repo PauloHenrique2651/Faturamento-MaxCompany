@@ -1725,6 +1725,15 @@ function rememberView(scope) {
 }
 let activeLoads = 0;
 async function load(background = false) {
+  if (state.view === 'mostrador' && state.mostradorLivePeriod) {
+    const live = displayPeriod(state.params.get('period') || 'month', today());
+    if (state.params.get('inicio') !== live.start || state.params.get('fim') !== live.end) {
+      state.params.set('inicio', live.start);
+      state.params.set('fim', live.end);
+      history.replaceState(null, '', href('mostrador'));
+    }
+  }
+
   if (!state.user) return;
   if (background && activeLoads > 0) return;
   activeLoads++;
@@ -2121,6 +2130,10 @@ function route() {
   state.params = new URLSearchParams(query);
   if (state.view === 'mostrador') {
     const period = displayPeriod(state.params.get('period') || 'month', today());
+    state.mostradorLivePeriod =
+      !state.params.has('inicio') ||
+      !state.params.has('fim') ||
+      (state.params.get('inicio') === period.start && state.params.get('fim') === period.end);
     if (!state.params.has('inicio') || !state.params.has('fim')) {
       state.params.set('inicio', period.start);
       state.params.set('fim', period.end);
