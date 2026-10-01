@@ -29,7 +29,11 @@ import { legacyViews, readSnapshot, saveSnapshot, state } from './state.js';
 import { reports, reportGroups } from './report-catalog.js';
 import { cfopCatalog, cfopDescription } from './lib/cfop-catalog.js';
 import { renderMostrador } from './mostrador.js';
-import { commercialPerformance, displayPeriod } from './lib/commercial-performance.js';
+import {
+  commercialPerformance,
+  displayPeriod,
+  selectedDisplayPeriod
+} from './lib/commercial-performance.js';
 import { confirmedFinancialReturn, FINANCIAL_CFOPS } from './lib/financial-cfops.js';
 import { registeredSalesReturns, saleReturnsValue, returnKind } from './lib/erp-documents.js';
 import { purchaseSuggestions, reconcilePurchases } from './lib/purchase-match.js';
@@ -1754,7 +1758,12 @@ async function load(background = false) {
       `<div class="loading"><span class="spinner"></span>${state.view === 'entradas' ? 'Lendo documentos da SEFAZ…' : 'Lendo XMLs de NF-e…'}</div>`;
   try {
     if (['mostrador', 'metas'].includes(state.view)) {
-      const period = displayPeriod(state.params.get('period') || 'month', today());
+      const period = selectedDisplayPeriod(
+        state.params.get('period') || 'month',
+        today(),
+        state.params.get('inicio'),
+        state.params.get('fim')
+      );
       const params = new URLSearchParams(state.params);
       if (state.view === 'mostrador') {
         params.set('inicio', period.start);

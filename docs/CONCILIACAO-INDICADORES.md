@@ -38,3 +38,5 @@ O coletor publica retratos do mês atual e do mês anterior a cada ciclo, conser
 ## Integridade da publicação
 
 A revisão de 01/10 encontrou 142 notas de setembro cujo ERP havia sido sobrescrito por um publicador antigo no computador local. O processo foi encerrado. O coletor dedicado passou a comparar também o estado ERP realmente persistido no Supabase e reenviar conciliações perdidas ou alteradas, preservando artefatos. A tarefa do servidor não tem mais o limite de execução de 72 horas. A comparação ignora a ordem das propriedades JSON e conserva cancelamentos fiscais confirmados.
+
+Os resumos SEFAZ não podem substituir itens, tributos ou classificação de um XML completo já armazenado. Uma revisão em lotes recupera documentos que foram degradados anteriormente, lendo o XML privado da própria nuvem e validando empresa e chave. O cancelamento continua sendo atualizado. A navegação para o mostrador preserva as datas selecionadas no dashboard, inclusive após a virada do mês.

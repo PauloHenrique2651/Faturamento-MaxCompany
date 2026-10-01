@@ -13,6 +13,7 @@ import {
 import { applyInvoiceStates, applyProductReferences } from '../public/lib/erp-documents.js';
 import { readNfeSummary, readOutgoingDocument } from './nfe-files.js';
 import {
+  parseSefazDocument,
   readIncomingDocument,
   readIncomingSummary,
   readIncomingSyncStatus
@@ -355,6 +356,92 @@ async function syncProductReferenceChanges(productReferences, state, sent) {
     reviewed: groups.size,
     pending: Math.max(0, pending.length - batch.length)
   };
+}
+
+// Um resumo novo não pode apagar os itens de um XML já confirmado.
+export function preserveFullIncomingSnapshot(row, stored) {
+  if (row.is_full_xml || !stored?.is_full_xml) return row;
+  const canceled = Boolean(row.is_canceled || stored.is_canceled);
+  return {
+    ...row,
+    amount: stored.amount,
+    counterparty_id: stored.counterparty_id,
+    counterparty_name: stored.counterparty_name,
+    operation_name: stored.operation_name,
+    purpose: stored.purpose,
+    fiscal_operation: stored.fiscal_operation,
+    referenced_keys: stored.referenced_keys,
+    items: stored.items,
+    taxes: stored.taxes,
+    freight: stored.freight,
+    is_full_xml: true,
+    is_canceled: canceled,
+    source_payload: { ...stored.source_payload, canceled }
+  };
+}
+async function preserveIncomingSnapshots(rows) {
+  const candidates = rows.filter((row) => !row.is_full_xml);
+  const stored = new Map();
+  for (let index = 0; index < candidates.length; index += 100) {
+    const keys = candidates
+      .slice(index, index + 100)
+      .map((row) => row.access_key)
+      .join(',');
+    const values = await request(
+      '/rest/v1/fiscal_documents?direction=eq.incoming&is_full_xml=eq.true&access_key=in.(' +
+        keys +
+        ')'
+    );
+    for (const row of values) stored.set(row.company_id + '/' + row.access_key, row);
+  }
+  return rows.map((row) =>
+    preserveFullIncomingSnapshot(row, stored.get(row.company_id + '/' + row.access_key))
+  );
+}
+async function recoverIncomingCloudSummaries(start, end, productReferences) {
+  const rows = await request(
+    '/rest/v1/fiscal_documents?direction=eq.incoming&issued_on=gte.' +
+      start +
+      '&issued_on=lte.' +
+      end +
+      '&is_full_xml=eq.false&xml_status=eq.AVAILABLE&order=issued_on.desc&limit=10'
+  );
+  const cn = { 1: '09562800000170', 2: '16851383000141', 3: '52748863000145', 4: '52748863000226' };
+  const names = { 1: 'MaxPlast', 2: 'MaxSafety', 3: 'MaxSupply', 4: 'MaxSupply · Filial ES' };
+  const restored = [];
+  const settings = config();
+  for (const row of rows) {
+    const path = row.company_id + '/incoming/' + row.access_key + '.xml';
+    if (row.xml_storage_path !== path) continue;
+    const response = await fetch(settings.url + '/storage/v1/object/fiscal-documents/' + path, {
+      headers: { apikey: settings.secret, Authorization: 'Bearer ' + settings.secret },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) continue;
+    const parsed = parseSefazDocument(await response.text(), cn[row.company_id]);
+    if (!parsed?.full || parsed.key !== row.access_key) continue;
+    const source = {
+      ...parsed,
+      company: names[row.company_id],
+      companyId: row.company_id,
+      value: parsed.amount,
+      itemsDetail: parsed.items,
+      items: parsed.items.length,
+      source: 'cloud-xml',
+      canceled: Boolean(row.is_canceled || parsed.canceled)
+    };
+    const enriched = productReferences.available
+      ? applyProductReferences(
+          [source],
+          productReferences.items,
+          'incoming',
+          productReferences.catalog
+        )[0]
+      : source;
+    restored.push(normalizeCloudDocument(enriched, 'incoming'));
+  }
+  await upsertDocuments(restored);
+  return { reviewed: rows.length, restored: restored.length };
 }
 
 async function upsertDocuments(rows) {
@@ -702,8 +789,15 @@ export async function syncSupabaseFromFalco() {
     const outgoingRows = [...outgoing.documents, ...outgoing.canceledDocuments].map((row) =>
       normalizeCloudDocument(row, 'outgoing')
     );
-    const incomingRows = [...incoming.documents, ...incoming.canceledDocuments].map((row) =>
-      normalizeCloudDocument(row, 'incoming')
+    const incomingRecovery = await recoverIncomingCloudSummaries(
+      previousStart,
+      end,
+      productReferences
+    );
+    const incomingRows = await preserveIncomingSnapshots(
+      [...incoming.documents, ...incoming.canceledDocuments].map((row) =>
+        normalizeCloudDocument(row, 'incoming')
+      )
     );
     const publicationReconciliation = await verifyPublishedInvoiceStates(
       invoiceStates.documents,
@@ -798,6 +892,7 @@ export async function syncSupabaseFromFalco() {
       maserpReports: state.maserpReports,
       erpReconciliation,
       publicationReconciliation,
+      incomingRecovery,
       productReconciliation,
       artifactAttempts,
       artifactErrors,
