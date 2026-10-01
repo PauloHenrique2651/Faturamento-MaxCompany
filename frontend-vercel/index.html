@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#07111c" />
-    <meta name="crm-build" content="41a2d10581563f67" />
+    <meta name="crm-build" content="c0e5bb8f2c58a8bd" />
     <link rel="icon" type="image/webp" href="/brand/favicon.webp" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,9 +14,9 @@
       rel="stylesheet"
     />
     <title>CRM Executivo · Grupo MaxCompany</title>
-    <link rel="stylesheet" href="/styles.css?v=41a2d10581563f67" />
-    <link rel="stylesheet" href="/brand.css?v=41a2d10581563f67" />
-    <link rel="stylesheet" href="/mostrador.css?v=41a2d10581563f67" />
+    <link rel="stylesheet" href="/styles.css?v=c0e5bb8f2c58a8bd" />
+    <link rel="stylesheet" href="/brand.css?v=c0e5bb8f2c58a8bd" />
+    <link rel="stylesheet" href="/mostrador.css?v=c0e5bb8f2c58a8bd" />
   </head>
   <body class="auth-pending">
     <section class="auth-screen" id="auth-screen" aria-label="Acesso ao CRM" hidden>
@@ -197,37 +197,30 @@
         <button class="icon-button" data-close aria-label="Fechar"></button>
       </div>
       <div class="dialog-content">
-        <h3>Dashboard NF-e</h3>
+        <h3>Lucro das vendas</h3>
         <p>
-          Soma dos valores totais dos XMLs autorizados de NF-e de saída encontrados no
-          compartilhamento Falco, excluindo as notas com evento de cancelamento identificado. É uma
-          visão dos arquivos disponíveis, sem conciliação de devoluções ou outros ajustes do ERP.
+          Vendas faturadas menos devoluções, custo das vendas e despesas apuradas pelo Falco. O
+          frete de entrada é descontado como outra despesa. Compras são exibidas separadamente e não
+          representam o custo das vendas.
         </p>
-        <h3>Vendedores, clientes e produtos</h3>
+        <h3>Pedidos e faturamento</h3>
         <p>
-          O vendedor é extraído do campo “Vendedor” nas informações adicionais do XML. Notas sem
-          essa indicação são contadas separadamente. Clientes vêm do destinatário e produtos dos
-          itens da nota. O valor do vendedor e do cliente usa o total da NF-e; o produto usa o valor
-          bruto do item. Isso não equivale a pedidos, comissão, margem ou cadastro completo do ERP.
+          Pedidos a faturar mostram o valor pendente. Já faturado desses pedidos considera somente
+          os pedidos criados no período selecionado. Vendas faturadas consideram as notas de venda
+          emitidas no período, inclusive de pedidos anteriores.
         </p>
-        <h3>NF-e recebidas da SEFAZ</h3>
+        <h3>Notas e devoluções</h3>
         <p>
-          A distribuição DF-e mostra documentos emitidos por fornecedores contra as empresas do
-          grupo. Essas notas medem entradas, não o faturamento das vendas. O servidor consulta a
-          SEFAZ nos intervalos permitidos; alguns documentos vêm apenas como resumo.
+          Notas canceladas ficam fora das vendas autorizadas. Devoluções de venda seguem o vínculo
+          com a nota de origem. Devoluções de compra permanecem separadas. Vendedor, cliente e
+          produto usam as informações das notas conciliadas com o MASERP.
         </p>
-        <h3>Backup do banco</h3>
+        <h3>Atualização automática</h3>
         <p>
-          A pasta BACKUP/BANCO_DE_DADOS contém arquivos MASERP.bak. Eles são cópias do SQL Server,
-          não tabelas legíveis diretamente pelo navegador e não acompanham cada alteração do Falco.
-          Por isso, os gráficos ao vivo usam os XMLs.
-        </p>
-        <h3>Consulta local</h3>
-        <p>
-          A página verifica a API local a cada 10 segundos e reconecta quando volta ao foco ou a
-          rede retorna. O servidor permanece ativo após fechar o navegador e inicia junto com o
-          Windows quando a tarefa de inicialização está instalada. As pastas são consultadas sem
-          alteração; não há transmissão instantânea de eventos.
+          O coletor funciona no servidor 24 horas, independentemente de acessar o CRM. O ciclo alvo
+          é de 30 segundos e as telas consultam a cada 10 segundos. Os dados anteriores são
+          revalidados em lotes. A consulta à SEFAZ respeita os intervalos oficiais; entradas
+          recebidas apenas como resumo aguardam a nota completa.
         </p>
       </div>
     </dialog>
@@ -238,7 +231,7 @@
       </div>
       <div id="detail-content" class="dialog-content"></div>
     </dialog>
-    <script src="/config.js?v=41a2d10581563f67"></script>
-    <script type="module" src="/app.js?v=41a2d10581563f67"></script>
+    <script src="/config.js?v=c0e5bb8f2c58a8bd"></script>
+    <script type="module" src="/app.js?v=c0e5bb8f2c58a8bd"></script>
   </body>
 </html>
