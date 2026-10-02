@@ -1,5 +1,6 @@
 import { summarySynchronization } from '../public/lib/maserp-periods.js';
 import http from 'node:http';
+import { bridgeAuthorized, bridgeRouteAllowed } from './api-bridge.js';
 import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, relative, isAbsolute } from 'node:path';
@@ -536,6 +537,14 @@ const server = http.createServer(async (req, res) => {
   if (req.headers['sec-fetch-site'] === 'cross-site')
     return json(res, 403, { error: 'Acesso local obrigatório' });
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const bridge = process.env.CRM_API_BRIDGE === 'true';
+  if (bridge) {
+    if (!bridgeAuthorized(req, process.env.CRM_SERVER_API_KEY))
+      return json(res, 401, { error: 'Acesso não autorizado.' });
+    if (!bridgeRouteAllowed(req.method, url.pathname))
+      return json(res, 403, { error: 'Rota indisponível nesta API.' });
+    res.setHeader('Cache-Control', 'private, no-store');
+  }
   try {
     if (url.pathname.startsWith('/api/')) {
       if (!['GET', 'HEAD'].includes(req.method)) {
@@ -569,7 +578,9 @@ const server = http.createServer(async (req, res) => {
           return json(res, 401, { error: error.message });
         }
       }
-      const user = await authenticate(req);
+      const user = bridge
+        ? { id: 'crm-server-bridge', name: 'CRM', role: 'viewer' }
+        : await authenticate(req);
       if (!user) return json(res, 401, { error: 'Faça login para continuar' });
       if (url.pathname === '/api/auth/me' && req.method === 'GET') return json(res, 200, user);
       if (url.pathname === '/api/auth/logout' && req.method === 'POST') {

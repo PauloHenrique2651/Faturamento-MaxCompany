@@ -17,6 +17,7 @@ import { equivalencesRoute } from '../../server/product-equivalences.js';
 import { walletRoute, validWalletStoragePath } from '../../server/wallet-route.js';
 import { payablesRoute, validPayablesStoragePath } from '../../server/payables-route.js';
 import { financeRoute } from '../../server/finance-route.js';
+import { proxyServerRead } from '../../server/api-bridge.js';
 import { ordersRoute, validOrderStoragePath } from '../../server/order-route.js';
 
 const scrypt = promisify(scryptCallback);
@@ -783,6 +784,7 @@ async function handle(req, res) {
     )
   )
     return json(res, 403, { error: 'Acesso restrito ao fiscal.' });
+  if (await proxyServerRead(req, res, path, url.search)) return;
   if (path === '/api/commercial/finance') {
     if (req.method !== 'GET') return json(res, 405, { error: 'Somente consulta.' });
     const result = await financeRoute({
