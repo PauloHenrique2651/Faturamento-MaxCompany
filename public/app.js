@@ -1784,7 +1784,10 @@ const snapshotRenderers = {
   impostos: taxDashboard
 };
 function viewSnapshotScope() {
-  const params = new URLSearchParams(state.params);
+  // As duas carteiras vêm completas; filtros e abas são aplicados no navegador.
+  const params = new URLSearchParams(
+    ['carteira', 'pagar'].includes(state.view) ? '' : state.params
+  );
   params.sort();
   return JSON.stringify([
     state.user.id || state.user.name,
