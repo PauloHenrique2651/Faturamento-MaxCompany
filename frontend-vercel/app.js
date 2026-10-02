@@ -1870,7 +1870,7 @@ async function load(background = false) {
         : 'Financeiro revisado em ' + new Date(data.checkedAt).toLocaleString('pt-BR');
       $('#connection-indicator').setAttribute('aria-label', 'Carteiras do MASERP publicadas');
       $('#data-source-status').textContent = 'Receber e pagar · atualização automática';
-      $('#refresh-cadence').textContent = 'Tela verifica as carteiras a cada 10 s';
+      $('#refresh-cadence').textContent = 'Tela verifica as carteiras a cada 30 s';
       $('#notice').innerHTML = stale
         ? '<div class="notice">Uma consulta aguarda revisão. Os últimos dados confirmados permanecem disponíveis, com os horários indicados em cada carteira.</div>'
         : '';
@@ -1887,7 +1887,7 @@ async function load(background = false) {
         'Pedidos revisados em ' + new Date(data.checkedAt).toLocaleString('pt-BR');
       $('#connection-indicator').setAttribute('aria-label', 'Consulta dos pedidos concluída');
       $('#data-source-status').textContent = 'Pedidos do MASERP · atualização automática';
-      $('#refresh-cadence').textContent = 'Tela verifica os pedidos a cada 10 s';
+      $('#refresh-cadence').textContent = 'Tela verifica os pedidos a cada 30 s';
       $('#notice').innerHTML = '';
       $('#context').innerHTML = '';
       return;
@@ -2037,7 +2037,7 @@ async function load(background = false) {
       $('#data-source-status').textContent = live
         ? 'Ao vivo · notas das pastas Falco'
         : 'Conexão parcial · últimas notas disponíveis';
-      $('#refresh-cadence').textContent = 'Tela consulta as pastas a cada 10 s';
+      $('#refresh-cadence').textContent = 'Tela consulta as pastas a cada 30 s';
       if (state.nfeData.source === 'Supabase') showCloudFreshness(state.nfeData);
       $('#notice').innerHTML = '';
       return;
@@ -2055,7 +2055,7 @@ async function load(background = false) {
         `Painel atualizado · ${new Date(state.incomingData.checkedAt).toLocaleTimeString('pt-BR')}`;
       $('#connection-indicator').setAttribute('aria-label', 'Documentos da SEFAZ consultados');
       $('#data-source-status').textContent = 'SEFAZ · sincronização automática na janela oficial';
-      $('#refresh-cadence').textContent = 'Tela consulta o acervo a cada 10 s';
+      $('#refresh-cadence').textContent = 'Tela consulta o acervo a cada 30 s';
       if (state.incomingData.source === 'Supabase') showCloudFreshness(state.incomingData);
       $('#notice').innerHTML = '';
       return;
@@ -2081,7 +2081,7 @@ async function load(background = false) {
       `Atualizado às ${new Date(data.atualizadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     $('#connection-indicator').setAttribute('aria-label', 'Conectado ao ERP Falco');
     $('#data-source-status').textContent = 'Ao vivo · dados da origem Falco';
-    $('#refresh-cadence').textContent = 'Tela consulta a origem a cada 10 s';
+    $('#refresh-cadence').textContent = 'Tela consulta a origem a cada 30 s';
     $('#notice').innerHTML = '';
     render();
   } catch (error) {
@@ -2833,7 +2833,7 @@ setInterval(() => {
     !['comissoes', 'usuarios', 'mostrador', 'metas'].includes(state.view)
   )
     load(true);
-}, 10000);
+}, 30000);
 setInterval(() => {
   if (state.view === 'mostrador') paintMostrador();
 }, 1000);
@@ -2854,4 +2854,4 @@ setInterval(() => {
 }, 20000);
 setInterval(() => {
   if (state.view === 'mostrador' && !document.hidden && !state.paused) load(true);
-}, 10000);
+}, 30000);

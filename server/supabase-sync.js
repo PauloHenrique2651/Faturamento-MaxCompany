@@ -1,3 +1,4 @@
+import { compactSyncDetails, publishCurrentOverview } from './sync-publication.js';
 import { historicalPage, historicalReportPeriod } from './reconciliation-plan.js';
 import { readMaserpPayables } from './maserp-payables.js';
 import { publishPayables } from './payables-route.js';
@@ -993,6 +994,8 @@ export async function syncSupabaseFromFalco() {
       artifactBackfillComplete: Boolean(state.artifactBackfillComplete),
       pendingArtifactFailures: Object.keys(state.artifactFailures || {}).length
     };
+    await publishCurrentOverview(details, state, request);
+    await saveState(state);
     if (runId)
       await updateRun(runId, {
         status: 'success',
@@ -1000,7 +1003,7 @@ export async function syncSupabaseFromFalco() {
         outgoing_count: outgoingRows.length,
         incoming_count: incomingRows.length,
         artifact_count: artifactCount,
-        details
+        details: compactSyncDetails(details)
       });
     const reportPath = join(root, 'report-snapshots.json');
     await writeFile(

@@ -313,7 +313,7 @@ async function linkFinancialReturns(rows) {
 }
 
 const cloudRowsCache = new Map();
-const cloudRowsTtl = 10000;
+const cloudRowsTtl = 30000;
 
 async function allCloudRows(path) {
   const now = Date.now();
@@ -555,14 +555,19 @@ function documentDetailFromCloud(row) {
 }
 
 let syncCache;
-async function syncOverview() {
-  if (syncCache && Date.now() - syncCache.at < 10000) return syncCache.value;
+let syncPending;
+async function readSyncOverview() {
   let value;
   try {
-    const runs = await supabase(
-      '/rest/v1/crm_sync_runs?source=eq.falco-local&order=started_at.desc&limit=3&select=status,started_at,finished_at,details'
-    );
-    const successful = runs.find((row) => row.status === 'success');
+    const [snapshots, runs] = await Promise.all([
+      supabase(
+        '/rest/v1/crm_sync_runs?source=eq.falco-current&order=id.desc&limit=1&select=status,started_at,finished_at,details'
+      ),
+      supabase(
+        '/rest/v1/crm_sync_runs?source=eq.falco-local&order=id.desc&limit=1&select=status,started_at,finished_at'
+      )
+    ]);
+    const successful = snapshots[0];
     const updatedAt = successful?.finished_at || null;
     const ageSeconds = updatedAt
       ? Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 1000))
@@ -575,8 +580,12 @@ async function syncOverview() {
       sefaz: successful?.details?.sefaz || [],
       maserpSales: successful?.details?.maserpSales || null,
       maserpReports: successful?.details?.maserpReports || {},
-      wallet: successful?.details?.wallet || null,
-      payables: successful?.details?.payables || null,
+      wallet: successful?.details?.wallet
+        ? { ...successful.details.wallet, checkedAt: updatedAt }
+        : null,
+      payables: successful?.details?.payables
+        ? { ...successful.details.payables, checkedAt: updatedAt }
+        : null,
       pendingArtifacts: successful?.details?.pendingArtifacts ?? null
     };
   } catch {
@@ -591,6 +600,15 @@ async function syncOverview() {
   }
   syncCache = { at: Date.now(), value };
   return value;
+}
+
+async function syncOverview() {
+  if (syncCache && Date.now() - syncCache.at < 30000) return syncCache.value;
+  if (syncPending) return syncPending;
+  syncPending = readSyncOverview().finally(() => {
+    syncPending = null;
+  });
+  return syncPending;
 }
 
 async function handleUsers(req, res, user, path) {
@@ -815,7 +833,7 @@ async function handle(req, res) {
     const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
     if (!query) return json(res, 200, searchDocuments([], query, offset));
     const rows = await allCloudRows(
-      '/rest/v1/fiscal_documents?select=*&order=issued_on.desc,company_id,access_key'
+      `/rest/v1/fiscal_documents?select=*&issued_on=gte.${dateParams(url).inicio}&issued_on=lte.${dateParams(url).fim}${[1, 2, 3, 4].includes(Number(url.searchParams.get('empresa'))) ? '&company_id=eq.' + Number(url.searchParams.get('empresa')) : ''}&order=issued_on.desc,company_id,access_key`
     );
     return json(
       res,
