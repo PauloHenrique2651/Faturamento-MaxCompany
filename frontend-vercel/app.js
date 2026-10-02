@@ -1250,7 +1250,12 @@ function paintMostrador() {
   const result = renderMostrador(state.nfeData, state.incomingData, state.targets, state.params, {
     slide: state.mostradorSlide,
     paused: state.mostradorPaused,
-    sort: state.mostradorSort
+    sort: state.mostradorSort,
+    walletData: state.walletData,
+    payablesData: state.payablesData,
+    financeSeries: state.displayFinanceSeries,
+    financeMode: state.displayFinanceMode,
+    financeDay: state.displayFinanceDay
   });
   if (
     result.signature !== state.mostradorSignature &&
@@ -1908,19 +1913,32 @@ async function load(background = false) {
         params.set('fim', period.end);
       }
 
-      const [outgoing, incoming, targets, commissionRules] = await Promise.all([
+      const [outgoing, incoming, targets, commissionRules, finance] = await Promise.all([
         fetchJson(`/api/falco/nfe?${params}`),
         state.view === 'mostrador'
           ? fetchJson(`/api/falco/entradas?${params}`)
           : Promise.resolve(null),
         fetchJson(`/api/commercial/targets?start=${params.get('inicio')}&end=${params.get('fim')}`),
-        state.view === 'metas' ? fetchJson('/api/commercial/commissions') : Promise.resolve([])
+        state.view === 'metas' ? fetchJson('/api/commercial/commissions') : Promise.resolve([]),
+        state.view === 'mostrador'
+          ? fetchJson('/api/commercial/finance').catch((error) => ({ errors: [error.message] }))
+          : Promise.resolve(null)
       ]);
       if (seq !== state.seq) return;
       state.nfeData = outgoing;
       state.incomingData = incoming;
       state.targets = targets;
       state.commissionRules = commissionRules;
+      if (state.view === 'mostrador' && finance) {
+        for (const [key, source] of [
+          ['walletData', 'wallet'],
+          ['payablesData', 'payables']
+        ]) {
+          if (finance[source]) state[key] = finance[source];
+          else if (state[key]) state[key] = { ...state[key], stale: true };
+        }
+        state.displayFinanceError = finance.errors?.join(' ') || '';
+      }
       rememberView(snapshotScope);
       if (state.view === 'mostrador') paintMostrador();
       else metasPage();
@@ -2474,6 +2492,31 @@ document.addEventListener('click', (e) => {
     go('mostrador', { period: key, inicio: period.start, fim: period.end });
     return;
   }
+  const cashSeries = e.target.closest('[data-display-cash-series]');
+  const cashMode = e.target.closest('[data-display-cash-mode]');
+  const cashDay = e.target.closest('[data-display-cash-day]');
+  if (cashSeries) {
+    state.displayFinanceSeries = cashSeries.dataset.displayCashSeries;
+    paintMostrador();
+    document
+      .querySelector(`[data-display-cash-series="${state.displayFinanceSeries}"]`)
+      ?.focus({ preventScroll: true });
+    return;
+  }
+  if (cashMode) {
+    state.displayFinanceMode = cashMode.dataset.displayCashMode;
+    paintMostrador();
+    document
+      .querySelector(`[data-display-cash-mode="${state.displayFinanceMode}"]`)
+      ?.focus({ preventScroll: true });
+    return;
+  }
+  if (cashDay) {
+    state.displayFinanceDay = cashDay.dataset.displayCashDay;
+    paintMostrador();
+    document.querySelector('[data-display-cash-select]')?.focus({ preventScroll: true });
+    return;
+  }
   const displaySlide = e.target.closest('[data-display-slide]');
   const displaySort = e.target.closest('[data-display-sort]');
   if (displaySort) {
@@ -2488,7 +2531,7 @@ document.addEventListener('click', (e) => {
   }
   if (e.target.closest('[data-display-next], [data-display-prev]')) {
     state.mostradorSlide =
-      (state.mostradorSlide + (e.target.closest('[data-display-next]') ? 1 : 4)) % 5;
+      (state.mostradorSlide + (e.target.closest('[data-display-next]') ? 1 : 5)) % 6;
     paintMostrador();
     return;
   }
@@ -2587,6 +2630,12 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('dialog a')) e.target.closest('dialog').close();
 });
 document.addEventListener('change', (e) => {
+  if (e.target.matches('[data-display-cash-select]')) {
+    state.displayFinanceDay = e.target.value;
+    paintMostrador();
+    document.querySelector('[data-display-cash-select]')?.focus({ preventScroll: true });
+    return;
+  }
   if (e.target.id === 'target-scope') {
     $('#target-company-field').hidden = e.target.value !== 'company';
     $('#target-seller-field').hidden = e.target.value !== 'seller';
@@ -2711,6 +2760,14 @@ $('#mobile-filters').onclick = () => {
 };
 $('#filters-scrim').onclick = closeFilters;
 document.addEventListener('keydown', (e) => {
+  const cashDay = e.target.closest?.('[data-display-cash-day]');
+  if (cashDay && ['Enter', ' '].includes(e.key)) {
+    e.preventDefault();
+    state.displayFinanceDay = cashDay.dataset.displayCashDay;
+    paintMostrador();
+    document.querySelector('[data-display-cash-select]')?.focus({ preventScroll: true });
+    return;
+  }
   if (e.key === 'Escape') {
     closeDrawer();
     closeFilters();
@@ -2851,7 +2908,7 @@ setInterval(() => {
     !display?.matches(':hover') &&
     !display?.matches(':focus-within')
   ) {
-    state.mostradorSlide = (state.mostradorSlide + 1) % 5;
+    state.mostradorSlide = (state.mostradorSlide + 1) % 6;
     paintMostrador();
   }
 }, 20000);

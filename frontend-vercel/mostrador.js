@@ -1,4 +1,6 @@
 import { matchingPreset } from './lib/analysis.js';
+import { cashFlow } from './lib/cash-flow.js';
+import { financeProjection } from './lib/finance-projection.js';
 import { profitabilityComposition } from './lib/profitability.js';
 import { selectMaserpReport, commercialBilled } from './lib/maserp-periods.js';
 import { commercialPerformance, selectedDisplayPeriod } from './lib/commercial-performance.js';
@@ -23,7 +25,7 @@ const periods = [
   ['quarter', 'Trimestre'],
   ['year', 'Ano']
 ];
-const slides = ['Resumo', 'Evolução', 'Vendedores', 'Clientes e produtos', 'Critérios'];
+const slides = ['Resumo', 'Evolução', 'Vendedores', 'Clientes e produtos', 'Carteira', 'Critérios'];
 
 function link(view, params, changes = {}) {
   const query = new URLSearchParams(params);
@@ -194,6 +196,104 @@ function dailyRhythmChart(daily) {
   const bestIndex = values.indexOf(peak);
   const last = daily.at(-1);
   return `<div class="display-chart-head compact"><div><span class="display-eyebrow">PULSO DIÁRIO</span><h2>Vendas por emissão</h2></div><strong>${shortMoney(average)}<small>/ dia corrido</small></strong></div><svg class="display-chart rhythm-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="rhythm-title rhythm-description"><title id="rhythm-title">Vendas financeiras por dia de emissão</title><desc id="rhythm-description">Média diária de ${esc(money(average))}. Melhor dia ${esc(daily[bestIndex].date)} com ${esc(money(peak))}.</desc><line class="average-line" x1="${left}" x2="${right}" y1="${y(average)}" y2="${y(average)}"/><text class="average-label" x="${right}" y="${y(average) - 7}" text-anchor="end">média ${esc(shortMoney(average))}</text>${bars}<text x="${left}" y="${height - 10}">${esc(daily[0].date.slice(8) + '/' + daily[0].date.slice(5, 7))}</text><text x="${right}" y="${height - 10}" text-anchor="end">${esc(last.date.slice(8) + '/' + last.date.slice(5, 7))}</text></svg><p class="display-chart-note">Pico de vendas em <strong>${esc(daily[bestIndex].date.slice(8) + '/' + daily[bestIndex].date.slice(5, 7))}</strong> · ${esc(shortMoney(peak))}</p>`;
+}
+
+function walletSlide(wallet, payables, period, company, today, options = {}) {
+  if (!wallet?.available || !payables?.available)
+    return '<section class="display-wallet"><header><span class="display-kicker">CARTEIRA</span><h1>Recebimentos e pagamentos</h1></header><p class="display-wallet-empty">A projeção aparece quando as duas carteiras estiverem disponíveis no servidor. O CRM mantém os últimos dados confirmados enquanto atualiza.</p></section>';
+  const flow = cashFlow(wallet.rows || [], payables.rows || [], {
+    inicio: period.start,
+    fim: period.end,
+    company,
+    today
+  });
+  const mode = options.financeMode === 'daily' ? 'daily' : 'cumulative';
+  const selected = ['receber', 'pagar'].includes(options.financeSeries)
+    ? options.financeSeries
+    : 'both';
+  const rows = financeProjection(flow, { inicio: period.start, fim: period.end, today, mode });
+  const chosen = rows.find((r) => r.date === options.financeDay) || rows[0];
+  const keys =
+    selected === 'receber'
+      ? ['received']
+      : selected === 'pagar'
+        ? ['paid']
+        : ['received', 'paid', 'net'];
+  const seriesMeta = {
+    received: ['A receber', 'received'],
+    paid: ['A pagar', 'paid'],
+    net: ['Saldo', 'balance']
+  };
+  const svg = rows.length
+    ? (() => {
+        const W = 900,
+          H = 310,
+          L = 72,
+          R = 882,
+          T = 24,
+          B = 244,
+          vals = rows.flatMap((r) => keys.map((k) => Number(r[k] || 0))),
+          lo = Math.min(0, ...vals),
+          hi = Math.max(1, ...vals),
+          span = hi - lo;
+        const x = (i) => L + ((R - L) * i) / Math.max(1, rows.length - 1),
+          y = (v) => B - ((B - T) * (v - lo)) / span;
+        const d = (k) =>
+          rows
+            .map((r, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(r[k]).toFixed(1))
+            .join(' ');
+        const tickIndexes = [
+          ...new Set([
+            0,
+            Math.round((rows.length - 1) / 3),
+            Math.round(((rows.length - 1) * 2) / 3),
+            rows.length - 1
+          ])
+        ];
+        return `<svg class="display-wallet-chart" viewBox="0 0 ${W} ${H}" role="group" aria-label="Projeção da carteira por vencimento, ${mode === 'daily' ? 'por dia' : 'acumulada'}"><title>Projeção da carteira</title><desc>Valores previstos para receber e pagar, com saldo diário ou acumulado. Os pontos são selecionáveis por teclado.</desc>${[
+          0, 0.25, 0.5, 0.75, 1
+        ]
+          .map((p) => {
+            let v = lo + span * p;
+            return `<line class="wallet-grid" x1="${L}" x2="${R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 9}" y="${y(v) + 4}" text-anchor="end">${esc(shortMoney(v).replace('R$ ', ''))}</text>`;
+          })
+          .join(
+            ''
+          )}<line class="wallet-zero" x1="${L}" x2="${R}" y1="${y(0)}" y2="${y(0)}"/>${keys.map((k) => `<path class="wallet-line ${seriesMeta[k][1]}" d="${d(k)}"/>`).join('')}${rows.map((r, i) => `<g class="wallet-hit" data-display-cash-day="${r.date}" role="button" tabindex="${r.date === chosen?.date ? 0 : -1}" aria-label="${r.date.split('-').reverse().join('/')} — a receber ${esc(money(r.receivable))}, a pagar ${esc(money(r.payable))}, saldo ${esc(money(r.balance))}"><title>${r.date.split('-').reverse().join('/')} · receber ${esc(money(r.receivable))} · pagar ${esc(money(r.payable))} · saldo ${esc(money(r.balance))}</title><rect x="${x(i) - Math.max(4, 390 / rows.length)}" y="${T}" width="${Math.max(8, 780 / rows.length)}" height="${B - T}"/><circle class="wallet-point received" cx="${x(i)}" cy="${y(r.received)}" r="3"/><circle class="wallet-point paid" cx="${x(i)}" cy="${y(r.paid)}" r="3"/><circle class="wallet-point net" cx="${x(i)}" cy="${y(r.net)}" r="3"/></g>`).join('')}${tickIndexes.map((i) => `<text x="${x(i)}" y="${H - 12}" text-anchor="${i === 0 ? 'start' : i === rows.length - 1 ? 'end' : 'middle'}">${rows[i].date.slice(8)}/${rows[i].date.slice(5, 7)}</text>`).join('')}</svg>`;
+      })()
+    : '<p class="display-wallet-empty">Sem vencimentos futuros no período selecionado.</p>';
+  const buttons = [
+    ['both', 'Receber e pagar'],
+    ['receber', 'Só receber'],
+    ['pagar', 'Só pagar']
+  ]
+    .map(
+      ([v, label]) =>
+        `<button type="button" data-display-cash-series="${v}" aria-pressed="${selected === v}" class="${selected === v ? 'active' : ''}">${label}</button>`
+    )
+    .join('');
+  const modes = [
+    ['cumulative', 'Acumulado'],
+    ['daily', 'Por dia']
+  ]
+    .map(
+      ([v, label]) =>
+        `<button type="button" data-display-cash-mode="${v}" aria-pressed="${mode === v}" class="${mode === v ? 'active' : ''}">${label}</button>`
+    )
+    .join('');
+  const details = chosen
+    ? `<div class="display-wallet-day"><label>Vencimento<select data-display-cash-select aria-label="Escolher vencimento">${rows.map((r) => `<option value="${r.date}" ${r.date === chosen.date ? 'selected' : ''}>${r.date.split('-').reverse().join('/')}</option>`).join('')}</select></label><span>A receber <strong>${money(chosen.receivable)}</strong></span><span>A pagar <strong>${money(chosen.payable)}</strong></span><span>Saldo do dia <strong>${money(chosen.balance)}</strong></span></div>`
+    : '';
+  const stamp = (d) =>
+    d?.checkedAt
+      ? new Date(d.checkedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+      : 'sem horário';
+  const routeParams = new URLSearchParams({
+    inicio: period.start,
+    fim: period.end,
+    ...(company ? { empresa: company } : {})
+  });
+  return `<section class="display-wallet"><header class="display-section-head"><div><span class="display-kicker">CARTEIRA · FLUXO FUTURO</span><h1>Recebimentos e pagamentos</h1><p>Vencimentos de ${period.start.split('-').reverse().join('/')} a ${period.end.split('-').reverse().join('/')} · projeção sem saldo bancário inicial</p></div><span class="display-wallet-live ${wallet.stale || payables.stale ? 'stale' : ''}">${wallet.stale || payables.stale ? 'Última revisão pendente' : 'Atualização automática · 30 s'}</span></header><div class="display-wallet-totals"><article><span>A receber</span><strong>${money(flow.receivable)}</strong><small>A vencer · sem antecipados</small></article><article><span>A pagar</span><strong>${money(flow.payable)}</strong><small>A vencer · inclui títulos bloqueados</small></article><article class="balance"><span>Saldo projetado</span><strong>${money(flow.balance)}</strong><small>Receber menos pagar no período</small></article></div><div class="display-wallet-tools"><div role="group" aria-label="Séries do gráfico">${buttons}</div><div role="group" aria-label="Escala do gráfico">${modes}</div></div><div class="display-wallet-chart-wrap">${svg}<div class="display-wallet-legend">${keys.map((k) => `<span class="${seriesMeta[k][1]}">${seriesMeta[k][0]}${mode === 'cumulative' ? ' acumulado' : ''}</span>`).join('')}</div></div>${details}<p class="display-wallet-note">Vencido a receber: <strong>${money(flow.overdueReceivable)}</strong> · vencido a pagar: <strong>${money(flow.overduePayable)}</strong> · bloqueado a pagar: <strong>${money(flow.blocked)}</strong> (incluído). Receber revisado em ${esc(stamp(wallet))}; pagar revisado em ${esc(stamp(payables))}.</p><nav class="display-wallet-links" aria-label="Detalhes da carteira"><a href="${esc(link('carteira', routeParams))}">Abrir contas a receber</a><a href="${esc(link('pagar', routeParams))}">Abrir contas a pagar</a></nav></section>`;
 }
 
 function sellerRows(sellers, sort, params, profitability = [], limit = 10) {
@@ -368,14 +468,30 @@ export function renderMostrador(outgoing, incoming, targets, params, options = {
     <section class="display-slide ${slide === 1 ? 'active' : ''}" data-slide="1"><div class="display-section-head"><div><span class="display-kicker">RITMO E TENDÊNCIA</span><h1>Evolução do período</h1><p>Valores fiscais por data de emissão. Confira o horário da última sincronização no cabeçalho.</p></div></div><div class="display-metrics">${metric('Projeção de fechamento', result.projection === null ? 'Aguardando histórico' : money(result.projection), 'Estimativa pelo ritmo recente e dias úteis')}${metric('Dias úteis restantes', String(result.remaining), 'Até o fim do período')}${metric('Ritmo fiscal médio', `${money(result.average)}/dia`, pace, result.requiredDaily !== null && result.average < result.requiredDaily ? 'attention' : '')}${metric('Necessário por dia', result.requiredDaily === null ? '—' : `${money(result.requiredDaily)}/dia`, result.target === null ? 'Meta não cadastrada' : 'Para atingir a meta')}${metric('Movimento hoje', money(result.today), 'Pela data de emissão da NF-e')}${metric('Ticket médio fiscal', ticket, 'Valor fiscal ÷ quantidade de NF-e')}</div><div class="display-chart-grid"><article class="display-chart-wrap">${cumulativeChart(result.daily)}</article><article class="display-chart-wrap rhythm-panel">${dailyRhythmChart(result.daily)}</article></div></section>
     <section class="display-slide ${slide === 2 ? 'active' : ''}" data-slide="2"><div class="display-section-head"><div><span class="display-kicker">EQUIPE COMERCIAL</span><h1>${sort === 'profit' ? 'Lucratividade por vendedor' : 'Ranking de vendedores'}</h1><p>${sort === 'profit' ? 'Lucro, custo e vendas conforme o Relatório de Lucratividade por Vendedor do Falco.' : 'Vendas e devoluções registradas nas notas de origem do Falco.'}</p></div><div class="display-sort" role="group" aria-label="Variação do ranking"><button data-display-sort="net" class="${sort === 'net' ? 'active' : ''}">Vendas após devoluções</button><button data-display-sort="profit" class="${sort === 'profit' ? 'active' : ''}">Lucro Falco</button><button data-display-sort="goal" class="${sort === 'goal' ? 'active' : ''}">% da meta</button><button data-display-sort="ticket" class="${sort === 'ticket' ? 'active' : ''}">Ticket</button></div></div><div class="display-ranking">${ranking}</div><p class="display-footnote">${sort === 'profit' ? 'O percentual é lucro dividido pelo custo. O frete de entrada já está incluído no custo apurado pelo Falco.' : `${number(outgoing?.unattributedCount || 0)} NF-e de venda sem vendedor identificável. Metas individuais aparecem após cadastro.`}</p></section>
     <section class="display-slide ${slide === 3 ? 'active' : ''}" data-slide="3"><div class="display-section-head"><div><span class="display-kicker">CARTEIRA E MIX</span><h1>Clientes e produtos</h1><p>Maiores valores documentados no período.</p></div></div><div class="display-double"><article><h2>Principais grupos de clientes</h2>${conciseRanking(result.topCustomers, params, 'clientes', 'grupoClienteNfe')}</article><article><h2>Produtos por valor bruto dos itens</h2>${conciseRanking(outgoing?.products || [], params, 'produtos', 'produtoNfe')}</article></div></section>
-    <section class="display-slide ${slide === 4 ? 'active' : ''}" data-slide="4"><div class="display-section-head"><div><span class="display-kicker">COMPOSIÇÃO E FONTES</span><h1>Critérios dos indicadores</h1></div></div><div class="display-reconciliation"><div><span>NF-e de venda autorizadas</span><strong>${money(result.gross)}</strong></div><div><span>Devoluções de clientes com vínculo confirmado</span><strong>− ${money(result.returned)}</strong></div><div class="total"><span>Vendas após devoluções</span><strong>${money(result.net)}</strong></div></div><div class="display-trust"><article><h2>Fiscal e comercial</h2><p>Faturamento comercial são valores dos pedidos vinculados a notas. O saldo fiscal usa as NF-e de venda identificadas por CFOP. Cancelamentos são excluídos das notas autorizadas; devoluções reduzem o total somente com referência confirmada.</p></article><article><h2>Lucratividade</h2><p>Reproduz o Relatório de Lucratividade do Falco. O frete de entrada já integra o custo das vendas e não é descontado novamente. A margem é o lucro dividido pelas vendas após devoluções. Compras permanecem separadas.</p>${c ? `<p>Total das notas Falco: ${money(c.notesSubtotal)}. Outras despesas: ${money(c.expenses)}. Total faturado com despesas: ${money(c.sales)}.</p><p>Total Geral após devoluções: ${money(c.base)} + outras despesas = ${money(c.totalWithExpenses)} no Total final do Falco.</p>` : ''}</article><article><h2>Atualização</h2><p>Última sincronização: ${esc(stamp(checked))}. O mostrador consulta o CRM a cada 10 segundos; as pastas fiscais e a SEFAZ seguem a cadência dos coletores.</p></article></div></section>
+    <section class="display-slide ${slide === 4 ? 'active' : ''}" data-slide="4">${walletSlide(options.walletData, options.payablesData, period, selectedCompany, today, options)}</section>
+    <section class="display-slide ${slide === 5 ? 'active' : ''}" data-slide="5"><div class="display-section-head"><div><span class="display-kicker">COMPOSIÇÃO E FONTES</span><h1>Critérios dos indicadores</h1></div></div><div class="display-reconciliation"><div><span>NF-e de venda autorizadas</span><strong>${money(result.gross)}</strong></div><div><span>Devoluções de clientes com vínculo confirmado</span><strong>− ${money(result.returned)}</strong></div><div class="total"><span>Vendas após devoluções</span><strong>${money(result.net)}</strong></div></div><div class="display-trust"><article><h2>Fiscal e comercial</h2><p>Faturamento comercial são valores dos pedidos vinculados a notas. O saldo fiscal usa as NF-e de venda identificadas por CFOP. Cancelamentos são excluídos das notas autorizadas; devoluções reduzem o total somente com referência confirmada.</p></article><article><h2>Lucratividade</h2><p>Reproduz o Relatório de Lucratividade do Falco. O frete de entrada já integra o custo das vendas e não é descontado novamente. A margem é o lucro dividido pelas vendas após devoluções. Compras permanecem separadas.</p>${c ? `<p>Total das notas Falco: ${money(c.notesSubtotal)}. Outras despesas: ${money(c.expenses)}. Total faturado com despesas: ${money(c.sales)}.</p><p>Total Geral após devoluções: ${money(c.base)} + outras despesas = ${money(c.totalWithExpenses)} no Total final do Falco.</p>` : ''}</article><article><h2>Atualização</h2><p>Última sincronização: ${esc(stamp(checked))}. O mostrador atualiza os dados a cada 30 segundos; os coletores seguem sua própria cadência.</p></article></div></section>
     <footer class="display-footer"><nav aria-label="Telas do mostrador">${slides.map((name, index) => `<button type="button" data-display-slide="${index}" class="${index === slide ? 'active' : ''}" aria-label="${esc(name)}">${String(index + 1).padStart(2, '0')} <span>${esc(name)}</span></button>`).join('')}</nav><div class="display-rotation" aria-hidden="true"><i></i><span>${options.paused ? 'PAUSADO' : 'PRÓXIMA TELA'}</span></div><div><button type="button" data-display-prev aria-label="Tela anterior">Anterior</button><button type="button" data-display-pause>${options.paused ? 'Retomar' : 'Pausar'} rotação</button><button type="button" data-display-next aria-label="Próxima tela">Próxima</button></div></footer>
   </div>`;
   const signature = JSON.stringify({
     periodKey,
+    periodStart: period.start,
+    periodEnd: period.end,
     selectedCompany,
     slide,
     sort,
+    financeSeries: options.financeSeries,
+    financeMode: options.financeMode,
+    financeDay: options.financeDay,
+    wallet: [
+      options.walletData?.checkedAt,
+      options.walletData?.stale,
+      options.walletData?.rows?.length
+    ],
+    payables: [
+      options.payablesData?.checkedAt,
+      options.payablesData?.stale,
+      options.payablesData?.rows?.length
+    ],
     paused: options.paused,
     target: result.target,
     net: result.net,
